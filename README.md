@@ -39,8 +39,26 @@ python3 -m src.main
 INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
 
-## Step 4: 開啟新終端機視窗，啟動 ngrok
+## Step 4: 暴露本地伺服器（二擇一）
 
+### 方法 A：VS Code Port Forwarding（推薦）
+
+> 適合已經在用 VS Code 開發的情況，不需額外安裝工具
+
+1. 在 VS Code 按 `Ctrl + Shift + P`
+2. 輸入 `Forward a Port` 並選擇
+3. 輸入 Port：`8000`
+4. **重要！** 在 PORTS 面板，右鍵點選該 port → **Port Visibility** → **Public**
+5. 複製產生的網址，格式如：
+   ```
+   https://xxxxxxxx-8000.asse.devtunnels.ms
+   ```
+
+### 方法 B：ngrok
+
+> 適合不使用 VS Code 或需要更多流量監控功能的情況
+
+開啟新終端機視窗，執行：
 ```bash
 ngrok http 8000
 ```
@@ -50,18 +68,35 @@ ngrok http 8000
 https://xxxxx-xxxxx-xxxxx.ngrok-free.dev
 ```
 
+---
+
 ## Step 5: 更新 Line Webhook URL
 
 1. 前往 [Line Developers Console](https://developers.line.biz/)
 2. 進入你的 Channel → Messaging API
 3. 找到 Webhook URL → Edit
-4. 貼上新網址：`https://你的ngrok網址/webhook`
+4. 貼上新網址：`https://你的網址/webhook`
 5. 點選 Update
 6. 確認 Use webhook 是開啟狀態
 
 ## Step 6: 測試
 
 在 Line 上傳送訊息給你的 Bot，確認收到回覆即可！
+
+---
+
+# 🔀 VS Code Port Forwarding vs ngrok 比較
+
+| 項目 | VS Code Port Forwarding | ngrok |
+|------|------------------------|-------|
+| **安裝** | VS Code 內建 | 需另外安裝 |
+| **帳號** | GitHub/Microsoft | ngrok 帳號 |
+| **操作** | VS Code PORTS 面板 | 終端機指令 |
+| **方便性** | ⭐⭐⭐ 一鍵操作 | ⭐⭐ 需開另一個終端機 |
+| **流量監控** | 基本 | 有 Web UI (localhost:4040) |
+| **網址格式** | `*.devtunnels.ms` | `*.ngrok-free.app` |
+
+**建議：** 日常開發用 VS Code Port Forwarding 較方便
 
 ---
 
@@ -126,7 +161,9 @@ cp .env.example .env
 - **NOTION_API_KEY** - [Notion Integrations](https://www.notion.so/my-integrations)
 - **NOTION_DATABASE_ID** - 從 Notion Database URL 取得
 
-## 4. 安裝 ngrok
+## 4. 安裝 ngrok（可選）
+
+如果要使用 ngrok 而非 VS Code Port Forwarding：
 
 ```bash
 curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
@@ -153,6 +190,9 @@ ngrok config add-authtoken 你的authtoken
 
 # 🛠️ 常見問題
 
+## Q: VS Code Port Forwarding 無法連線？
+A: 確認 Port Visibility 設為 **Public**。Line Webhook 需要公開存取。
+
 ## Q: ngrok 網址每次都不一樣？
 A: 免費版限制。每次重啟需更新 Line Webhook URL。付費版可固定網址。
 
@@ -172,6 +212,7 @@ A: 在終端機按 `Ctrl + C`
 - [Line Messaging API 文件](https://developers.line.biz/en/docs/messaging-api/)
 - [Google Gemini API 文件](https://ai.google.dev/docs)
 - [Notion API 文件](https://developers.notion.com/)
+- [VS Code Port Forwarding 文件](https://code.visualstudio.com/docs/editor/port-forwarding)
 
 ---
 
