@@ -1,22 +1,24 @@
 # 📋 Spec: Line Bot Content Saver
 
 ## 1. Vision
-一個 Line Bot，接收使用者傳送的文字或網址，
+一個 Line Bot，接收使用者傳送的文字、網址或社群貼文，
 使用 Gemini AI 進行摘要分析，並儲存至 Notion 資料庫。
 
-## 2. Current Status: ✅ MVP Complete
+## 2. Current Status: 🚀 Phase 4 In Progress
 
 ### 已完成功能
 - ✅ 文字訊息摘要
 - ✅ 網址內容抓取與摘要
 - ✅ AI 自動產生標題、摘要、標籤
 - ✅ 儲存至 Notion Database
-- ✅ 本地開發環境 (ngrok)
+- ✅ 本地開發環境 (ngrok / VS Code Port Forwarding)
+- ✅ 社群貼文偵測 (Facebook / Threads)
+- 🔧 社群貼文爬取 (Apify) - 修復中
 
 ### 待開發功能
 - ⬜ 圖片處理 (OCR / Vision AI)
-- ⬜ 社群貼文支援 (IG/FB/Twitter)
 - ⬜ 雲端部署 (Railway / Render)
+- ⬜ 更多社群平台 (IG/Twitter)
 - ⬜ 多語言摘要支援
 - ⬜ 自訂摘要風格
 
@@ -30,8 +32,9 @@
 | Notion         | notion-client                  | ✅ |
 | HTTP Client    | httpx                          | ✅ |
 | HTML Parser    | beautifulsoup4                 | ✅ |
+| Social Scraper | apify-client                   | ✅ |
 | Dev Server     | uvicorn                        | ✅ |
-| Tunnel         | ngrok                          | ✅ |
+| Tunnel         | ngrok / VS Code Port Forward   | ✅ |
 
 ## 4. Architecture (Clean Architecture)
 ```
@@ -45,9 +48,9 @@
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐    │
 │  │ line_handler │ │gemini_service│ │ notion_repo  │    │
 │  └──────────────┘ └──────────────┘ └──────────────┘    │
-│  ┌──────────────┐                                       │
-│  │ web_scraper  │                                       │
-│  └──────────────┘                                       │
+│  ┌──────────────┐ ┌───────────────┐ ┌──────────────┐   │
+│  │ web_scraper  │ │social_detector│ │apify_scraper │   │
+│  └──────────────┘ └───────────────┘ └──────────────┘   │
 └─────────────────────┬───────────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────────┐
@@ -61,7 +64,7 @@
 │                    Domain Layer                          │
 │  ┌─────────────────────┐ ┌─────────────────────┐        │
 │  │      Content        │ │    ContentType      │        │
-│  │     (Entity)        │ │      (Enum)         │        │
+│  │     (Entity)        │ │  SocialPlatform     │        │
 │  └─────────────────────┘ └─────────────────────┘        │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -73,18 +76,23 @@ Line bot/
 │   ├── __init__.py
 │   ├── domain/
 │   │   ├── __init__.py
-│   │   └── content.py          # Content Entity, ContentType Enum
+│   │   └── content.py          # Content Entity, ContentType, SocialPlatform
 │   ├── usecase/
 │   │   ├── __init__.py
-│   │   ├── summarize.py        # SummarizeUseCase
+│   │   ├── summarize.py        # SummarizeUseCase (支援 SOCIAL 類型)
 │   │   └── save_to_notion.py   # SaveToNotionUseCase
 │   ├── infrastructure/
 │   │   ├── __init__.py
 │   │   ├── line_handler.py     # Line Webhook Handler
 │   │   ├── gemini_service.py   # Gemini AI Adapter
 │   │   ├── notion_repo.py      # Notion Repository
-│   │   └── web_scraper.py      # URL Content Fetcher
+│   │   ├── web_scraper.py      # URL Content Fetcher
+│   │   ├── social_detector.py  # 社群網址偵測 (FB/Threads)
+│   │   └── apify_scraper.py    # 社群貼文爬取 (Apify)
 │   └── main.py                 # FastAPI Entry Point
+├── tests/                      # 測試檔案
+│   ├── test_social_detector.py
+│   └── verify_social.py
 ├── venv/                       # Python Virtual Environment
 ├── .env                        # Environment Variables (實際值)
 ├── .env.example                # Environment Variables (範本)
@@ -97,11 +105,15 @@ Line bot/
 
 ## 6. Domain Model
 ```python
+class SocialPlatform(Enum):
+    FACEBOOK = "facebook"
+    THREADS = "threads"
+
 class ContentType(Enum):
     TEXT = "text"
     URL = "url"
-    IMAGE = "image"      # Phase 2
-    SOCIAL = "social"    # Phase 3
+    SOCIAL = "social"    # Phase 4 ✅
+    IMAGE = "image"      # Phase 2 (Future)
 
 @dataclass
 class Content:
@@ -109,6 +121,7 @@ class Content:
     content_type: ContentType
     raw_content: str
     source_url: Optional[str]
+    social_platform: Optional[SocialPlatform]  # Phase 4 ✅
     title: Optional[str]
     summary: Optional[str]
     tags: List[str]
@@ -140,6 +153,7 @@ class Content:
 | GEMINI_API_KEY              | Google Gemini API Key      | ✅ |
 | NOTION_API_KEY              | Notion Integration Token   | ✅ |
 | NOTION_DATABASE_ID          | Notion Database ID         | ✅ |
+| APIFY_API_TOKEN             | Apify API Token (社群爬取) | ✅ |
 
 ## 10. Data Flow
 ```
@@ -150,19 +164,19 @@ User sends message to Line Bot
             │
             ▼
     Detect Content Type
-    (URL or Text)
+    (SOCIAL → URL → Text)
             │
             ▼
-    ┌───────┴───────┐
-    │               │
-    ▼               ▼
-  [URL]          [Text]
-    │               │
-    ▼               │
- WebScraper         │
- (抓取內容)          │
-    │               │
-    └───────┬───────┘
+    ┌───────┼───────┐
+    │       │       │
+    ▼       ▼       ▼
+[SOCIAL]  [URL]  [Text]
+    │       │       │
+    ▼       ▼       │
+ Apify   WebScraper │
+(FB/Threads) (抓取網頁)│
+    │       │       │
+    └───────┴───────┘
             │
             ▼
     Gemini AI Service
@@ -176,3 +190,9 @@ User sends message to Line Bot
     Push Message to User
     (回覆結果)
 ```
+
+## 11. Apify Actors (社群貼文爬取)
+| Platform | Actor ID                        | Input                   | Key Output Fields       |
+|----------|--------------------------------|-------------------------|-------------------------|
+| Facebook | apify/facebook-posts-scraper   | startUrls: [{url}]     | text, pageName, likes   |
+| Threads  | sinam7/threads-post-scraper    | urls: [url]            | caption, user, like_count|

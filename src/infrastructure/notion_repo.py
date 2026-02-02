@@ -43,7 +43,10 @@ class NotionRepository:
         content_type: str,
         tags: List[str],
         source_url: Optional[str] = None,
-        created_at: Optional[datetime] = None
+        created_at: Optional[datetime] = None,
+        author: Optional[str] = None,
+        likes: Optional[int] = None,
+        comments: Optional[int] = None
     ) -> SaveResult:
         """
         Save content to Notion database.
@@ -92,6 +95,20 @@ class NotionRepository:
             if source_url:
                 properties["Source URL"] = {
                     "url": source_url
+                }
+
+            # Add social media metadata if provided
+            if author:
+                properties["Author"] = {
+                    "rich_text": [{"text": {"content": author}}]
+                }
+            if likes is not None:
+                properties["Likes"] = {
+                    "number": likes
+                }
+            if comments is not None:
+                properties["Comments"] = {
+                    "number": comments
                 }
 
             # Create page in database

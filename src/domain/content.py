@@ -12,10 +12,17 @@ from typing import Optional, List
 import uuid
 
 
+class SocialPlatform(Enum):
+    """Supported social media platforms."""
+    FACEBOOK = "facebook"
+    THREADS = "threads"
+
+
 class ContentType(Enum):
     """Type of content received from user."""
     TEXT = "text"
     URL = "url"
+    SOCIAL = "social"
 
 
 @dataclass
@@ -25,22 +32,30 @@ class Content:
 
     Attributes:
         id: Unique identifier for the content
-        content_type: Type of content (TEXT or URL)
+        content_type: Type of content (TEXT, URL, or SOCIAL)
         raw_content: Original content from user
-        source_url: URL if content_type is URL, None otherwise
+        source_url: URL if content_type is URL or SOCIAL, None otherwise
+        social_platform: Platform if content_type is SOCIAL, None otherwise
         title: AI-generated title
         summary: AI-generated summary
         tags: AI-generated tags for categorization
         created_at: Timestamp when content was created
+        author: Author name (for social media posts)
+        likes: Like count (for social media posts)
+        comments: Comment count (for social media posts)
     """
     content_type: ContentType
     raw_content: str
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     source_url: Optional[str] = None
+    social_platform: Optional[SocialPlatform] = None
     title: Optional[str] = None
     summary: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
+    author: Optional[str] = None
+    likes: Optional[int] = None
+    comments: Optional[int] = None
 
     def is_url(self) -> bool:
         """Check if content is a URL type."""
@@ -69,4 +84,14 @@ def create_url_content(url: str) -> Content:
         content_type=ContentType.URL,
         raw_content=url,
         source_url=url
+    )
+
+
+def create_social_content(url: str, platform: SocialPlatform) -> Content:
+    """Factory function to create a SOCIAL type content."""
+    return Content(
+        content_type=ContentType.SOCIAL,
+        raw_content=url,
+        source_url=url,
+        social_platform=platform
     )

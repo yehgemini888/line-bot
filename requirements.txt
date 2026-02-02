@@ -19,3 +19,6 @@ beautifulsoup4==4.12.3
 
 # Environment Variables
 python-dotenv==1.0.0
+
+# Apify (Social Media Scraping)
+apify-client>=1.0.0

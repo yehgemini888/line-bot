@@ -5,6 +5,7 @@ Handles incoming Line messages and coordinates with use cases.
 """
 
 import re
+from typing import Optional
 from linebot.v3.messaging import (
     AsyncApiClient,
     AsyncMessagingApi,
@@ -14,9 +15,10 @@ from linebot.v3.messaging import (
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
-from src.domain.content import ContentType
+from src.domain.content import ContentType, SocialPlatform
 from src.usecase.summarize import SummarizeUseCase
 from src.usecase.save_to_notion import SaveToNotionUseCase
+from src.infrastructure.social_detector import SocialDetector
 
 
 class LineMessageHandler:
@@ -42,7 +44,8 @@ class LineMessageHandler:
         self,
         channel_access_token: str,
         summarize_usecase: SummarizeUseCase,
-        save_usecase: SaveToNotionUseCase
+        save_usecase: SaveToNotionUseCase,
+        social_detector: SocialDetector
     ):
         """
         Initialize the handler.
@@ -51,12 +54,14 @@ class LineMessageHandler:
             channel_access_token: Line channel access token
             summarize_usecase: Use case for summarization
             save_usecase: Use case for saving to Notion
+            social_detector: Detector for social media URLs
         """
         configuration = Configuration(access_token=channel_access_token)
         self.api_client = AsyncApiClient(configuration)
         self.messaging_api = AsyncMessagingApi(self.api_client)
         self.summarize_usecase = summarize_usecase
         self.save_usecase = save_usecase
+        self.social_detector = social_detector
 
     async def handle_message(self, event: MessageEvent) -> None:
         """
@@ -75,10 +80,10 @@ class LineMessageHandler:
         await self._reply(reply_token, "收到！正在處理中... ⏳")
 
         # Detect content type
-        content_type = self._detect_content_type(user_text)
+        content_type, platform = self._analyze_content(user_text)
 
         # Process the content
-        result = await self._process_content(user_text, content_type)
+        result = await self._process_content(user_text, content_type, platform)
 
         # Note: We can't reply twice with the same token
         # The result will be sent via push message if needed
@@ -100,12 +105,13 @@ class LineMessageHandler:
             Result message to send back to user
         """
         # Detect content type
-        content_type = self._detect_content_type(user_text)
+        content_type, platform = self._analyze_content(user_text)
 
         # Step 1: Summarize
         summarize_result = await self.summarize_usecase.execute(
             raw_input=user_text,
-            input_type=content_type
+            input_type=content_type,
+            social_platform=platform
         )
 
         if not summarize_result.success:
@@ -123,18 +129,35 @@ class LineMessageHandler:
         response = self._build_success_response(content, save_result.page_url)
         return response
 
-    def _detect_content_type(self, text: str) -> ContentType:
-        """Detect if text is a URL or plain text."""
-        if self.URL_PATTERN.match(text.strip()):
-            return ContentType.URL
-        return ContentType.TEXT
+    def _analyze_content(self, text: str) -> tuple[ContentType, Optional[SocialPlatform]]:
+        """Analyze text to determine content type and platform."""
+        # Check social media
+        social_result = self.social_detector.detect(text)
+        if social_result.is_social:
+            print(f"🕵️ [Debug] Detected SOCIAL: {social_result.platform} ({text})")
+            return ContentType.SOCIAL, social_result.platform
 
-    async def _process_content(self, text: str, content_type: ContentType) -> str:
+        # Check URL
+        if self.URL_PATTERN.match(text.strip()):
+            print(f"🕵️ [Debug] Detected URL: {text}")
+            return ContentType.URL, None
+            
+        print(f"🕵️ [Debug] Detected TEXT: {text[:20]}...")
+        return ContentType.TEXT, None
+
+    async def _process_content(
+        self, 
+        text: str, 
+        content_type: ContentType,
+        platform: Optional[SocialPlatform] = None
+    ) -> str:
         """Process content through summarization and save."""
+        print(f"⚙️ [Debug] Processing content: type={content_type}, platform={platform}")
         # Step 1: Summarize
         summarize_result = await self.summarize_usecase.execute(
             raw_input=text,
-            input_type=content_type
+            input_type=content_type,
+            social_platform=platform
         )
 
         if not summarize_result.success:

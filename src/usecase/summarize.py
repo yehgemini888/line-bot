@@ -1,13 +1,16 @@
 """
 UseCase Layer: Summarize Content
 
-Orchestrates web scraping and AI summarization.
+Orchestrates web scraping, social media scraping, and AI summarization.
 """
 
 from dataclasses import dataclass
 from typing import Protocol, Optional, List
 
-from src.domain.content import Content, ContentType, create_text_content, create_url_content
+from src.domain.content import (
+    Content, ContentType, SocialPlatform,
+    create_text_content, create_url_content, create_social_content
+)
 
 
 # Define interfaces (ports) for dependency injection
@@ -22,6 +25,13 @@ class WebScraperService(Protocol):
     """Interface for web scraping service."""
 
     async def scrape(self, url: str) -> "ScrapeResult":
+        ...
+
+
+class SocialScraperService(Protocol):
+    """Interface for social media scraping service."""
+
+    async def scrape(self, url: str, platform: SocialPlatform) -> "SocialScrapeResult":
         ...
 
 
@@ -46,6 +56,19 @@ class ScrapeResult:
 
 
 @dataclass
+class SocialScrapeResult:
+    """Expected result from social scraper."""
+    platform: SocialPlatform
+    url: str
+    author: Optional[str]
+    text_content: str
+    likes: Optional[int]
+    comments: Optional[int]
+    success: bool
+    error_message: Optional[str] = None
+
+
+@dataclass
 class SummarizeResult:
     """Result of the summarize use case."""
     content: Content
@@ -61,18 +84,30 @@ class SummarizeUseCase:
     a Content entity with AI-generated summary and tags.
     """
 
-    def __init__(self, ai_service: AIService, web_scraper: WebScraperService):
+    def __init__(
+        self,
+        ai_service: AIService,
+        web_scraper: WebScraperService,
+        social_scraper: SocialScraperService
+    ):
         """
         Initialize the use case.
 
         Args:
             ai_service: AI service for summarization (Gemini)
             web_scraper: Web scraper for URL content extraction
+            social_scraper: Social scraper for social media content
         """
         self.ai_service = ai_service
         self.web_scraper = web_scraper
+        self.social_scraper = social_scraper
 
-    async def execute(self, raw_input: str, input_type: ContentType) -> SummarizeResult:
+    async def execute(
+        self,
+        raw_input: str,
+        input_type: ContentType,
+        social_platform: Optional[SocialPlatform] = None
+    ) -> SummarizeResult:
         """
         Execute the summarize use case.
 
@@ -100,6 +135,51 @@ class SummarizeUseCase:
             text_to_summarize = scrape_result.text_content
             if scrape_result.title:
                 content.title = scrape_result.title
+
+            if scrape_result.title:
+                content.title = scrape_result.title
+
+        elif input_type == ContentType.SOCIAL:
+            if not social_platform:
+                return SummarizeResult(
+                    content=create_text_content(raw_input),
+                    success=False,
+                    error_message="缺少社群平台資訊"
+                )
+
+            content = create_social_content(raw_input, social_platform)
+            
+            # Scrape social content
+            scrape_result = await self.social_scraper.scrape(raw_input, social_platform)
+
+            if not scrape_result.success:
+                return SummarizeResult(
+                    content=content,
+                    success=False,
+                    error_message=f"無法抓取社群貼文: {scrape_result.error_message}"
+                )
+
+            text_to_summarize = scrape_result.text_content
+
+            # Update raw_content with actual post text (for saving to Notion)
+            content.raw_content = scrape_result.text_content
+
+            # Store social media metadata in content entity
+            content.author = scrape_result.author
+            content.likes = scrape_result.likes
+            content.comments = scrape_result.comments
+
+            # Add metadata to summary context for AI
+            meta_info = []
+            if scrape_result.author:
+                meta_info.append(f"作者: {scrape_result.author}")
+            if scrape_result.likes:
+                meta_info.append(f"按讚數: {scrape_result.likes}")
+            if scrape_result.comments:
+                meta_info.append(f"留言數: {scrape_result.comments}")
+
+            if meta_info:
+                text_to_summarize = f"{' | '.join(meta_info)}\n\n{text_to_summarize}"
 
         else:
             content = create_text_content(raw_input)

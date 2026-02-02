@@ -23,7 +23,10 @@ class ContentRepository(Protocol):
         content_type: str,
         tags: List[str],
         source_url: Optional[str] = None,
-        created_at: Optional[datetime] = None
+        created_at: Optional[datetime] = None,
+        author: Optional[str] = None,
+        likes: Optional[int] = None,
+        comments: Optional[int] = None
     ) -> "RepositorySaveResult":
         ...
 
@@ -92,7 +95,10 @@ class SaveToNotionUseCase:
             content_type=content.content_type.value,
             tags=content.tags,
             source_url=content.source_url,
-            created_at=content.created_at
+            created_at=content.created_at,
+            author=content.author,
+            likes=content.likes,
+            comments=content.comments
         )
 
         if not result.success:
