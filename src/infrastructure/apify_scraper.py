@@ -97,9 +97,11 @@ class ApifyScraper:
         actor_id = self.ACTORS[SocialPlatform.FACEBOOK]
 
         # Input for facebook-posts-scraper
+        # Optimize: reduce retries and timeout for faster response
         run_input = {
             "startUrls": [{"url": url}],
             "resultsLimit": 1,
+            "maxRequestRetries": 1,  # Reduce from default 3 to speed up
         }
 
         print(f"🔍 [Apify] Scraping Facebook post: {url}")
@@ -135,6 +137,51 @@ class ApifyScraper:
         print(f"🐛 [Debug] Facebook Item Keys: {list(item.keys())}")
         print(f"🐛 [Debug] Facebook Item: {item}")
 
+        # Check if this is a Photo type (different structure than Post)
+        item_type = item.get("__typename", "")
+        is_photo = item_type == "Photo"
+        print(f"🐛 [Debug] Facebook Item Type: {item_type}, Is Photo: {is_photo}")
+
+        # For Photo type, try to get the original post URL and re-scrape
+        if is_photo:
+            original_post_url = None
+            # Try to get original post URL from feedback or creation_story
+            if "feedback" in item and isinstance(item["feedback"], dict):
+                original_post_url = item["feedback"].get("url")
+            if not original_post_url and "creation_story" in item and isinstance(item["creation_story"], dict):
+                original_post_url = item["creation_story"].get("url")
+
+            if original_post_url and original_post_url != url:
+                print(f"🔄 [Apify] Photo detected, re-scraping original post: {original_post_url}")
+
+                # Extract engagement data from Photo as fallback (in case re-scrape fails)
+                photo_likes = None
+                photo_comments = None
+                if "feedback" in item and isinstance(item["feedback"], dict):
+                    feedback = item["feedback"]
+                    photo_likes = (
+                        feedback.get("reactors", {}).get("count") or
+                        feedback.get("unified_reactors", {}).get("count")
+                    )
+
+                # Re-scrape using the original post URL
+                result = await self._scrape_facebook(original_post_url)
+
+                # If re-scrape got no engagement data, use Photo's data as fallback
+                if result.success and not result.likes and photo_likes:
+                    result = SocialScrapeResult(
+                        platform=result.platform,
+                        url=result.url,
+                        author=result.author,
+                        text_content=result.text_content,
+                        likes=photo_likes,
+                        comments=result.comments or photo_comments,
+                        shares=result.shares,
+                        success=result.success
+                    )
+
+                return result
+
         # Extract text content - try multiple possible field names
         text_content = (
             item.get("text") or
@@ -145,10 +192,19 @@ class ApifyScraper:
             ""
         )
 
+        # For Photo type, try to get accessibility caption as fallback
+        if not text_content and is_photo:
+            text_content = item.get("accessibility_caption", "")
+            # Also check for title in Photo
+            if not text_content:
+                text_content = item.get("title", "")
+
         # Extract author - check multiple possible field names
         author = None
         if "user" in item and isinstance(item["user"], dict):
             author = item["user"].get("name") or item["user"].get("username")
+        if not author and "owner" in item and isinstance(item["owner"], dict):
+            author = item["owner"].get("name") or item["owner"].get("username")
         if not author:
             author = (
                 item.get("pageName") or
@@ -169,14 +225,50 @@ class ApifyScraper:
             item.get("commentsCount") or
             item.get("commentCount")
         )
+        shares = (
+            item.get("shares") or
+            item.get("sharesCount") or
+            item.get("shareCount")
+        )
+
+        # For Photo type, extract engagement from feedback object
+        if is_photo and "feedback" in item:
+            feedback = item["feedback"]
+            print(f"🐛 [Debug] Facebook Photo feedback: {feedback}")
+
+            # Extract likes/reactions from feedback
+            if not likes:
+                likes = (
+                    feedback.get("reactors", {}).get("count") or
+                    feedback.get("unified_reactors", {}).get("count") or
+                    feedback.get("reaction_count", {}).get("count")
+                )
+
+            # Extract comments from feedback
+            if not comments:
+                comments = (
+                    feedback.get("comment_count", {}).get("total_count") or
+                    feedback.get("comments", {}).get("count")
+                )
+
+            # Extract shares from feedback
+            if not shares:
+                shares = (
+                    feedback.get("share_count", {}).get("count") or
+                    feedback.get("shares", {}).get("count")
+                )
+
+        print(f"🐛 [Debug] Facebook engagement - Likes: {likes}, Comments: {comments}, Shares: {shares}")
 
         # Check if we got any content
         if not text_content:
             print(f"⚠️ [Apify] Facebook post has no text content. Full item: {item}")
-            # Still return success if we got the item, just with empty text
-            # Some posts might be image/video only
+            # For Photo type, it's okay to have no text - use placeholder
+            if is_photo:
+                text_content = "[Facebook 圖片貼文]"
+                print(f"📷 [Apify] Photo type detected, using placeholder text")
 
-        print(f"✅ [Apify] Successfully scraped Facebook post. Text length: {len(str(text_content))}")
+        print(f"✅ [Apify] Successfully scraped Facebook post. Text length: {len(str(text_content))}, Type: {item_type}")
 
         return SocialScrapeResult(
             platform=SocialPlatform.FACEBOOK,
@@ -185,7 +277,8 @@ class ApifyScraper:
             text_content=str(text_content) if text_content else "",
             likes=likes,
             comments=comments,
-            success=bool(text_content)  # Only success if we got text
+            shares=shares,
+            success=bool(text_content) or is_photo  # Success if we got text OR it's a photo
         )
 
     async def _scrape_threads(self, url: str) -> SocialScrapeResult:
@@ -260,18 +353,30 @@ class ApifyScraper:
         if isinstance(text_content, dict):
             text_content = text_content.get("text", "")
 
-        # Extract likes from content before cleaning
-        # The scraper embeds like count at the end of content (e.g., "110")
+        # Extract engagement metrics from content before cleaning
+        # The scraper embeds metrics at the end: likes, shares (e.g., "611\n114")
         extracted_likes = None
+        extracted_shares = None
+        extracted_numbers = []
+
         if text_content:
             lines = text_content.split('\n')
-            # Check last few lines for a pure number (like count)
-            for line in reversed(lines[-3:]):
+            # Collect all numbers from the end of content
+            for line in reversed(lines):
                 line_stripped = line.strip()
                 if line_stripped.isdigit():
-                    extracted_likes = int(line_stripped)
-                    print(f"🐛 [Debug] Extracted likes from content: {extracted_likes}")
-                    break
+                    extracted_numbers.insert(0, int(line_stripped))
+                elif line_stripped and line_stripped not in ['Translate', 'Reply', 'Share', 'More', '\xa0\xa0']:
+                    break  # Stop when we hit non-number content
+
+            # First number is typically likes, second is shares
+            if len(extracted_numbers) >= 1:
+                extracted_likes = extracted_numbers[0]
+            if len(extracted_numbers) >= 2:
+                extracted_shares = extracted_numbers[1]
+
+            print(f"🐛 [Debug] Extracted numbers from content: {extracted_numbers}")
+            print(f"🐛 [Debug] Likes: {extracted_likes}, Shares: {extracted_shares}")
 
         # Clean up the content - remove metadata mixed in by the scraper
         # The scraper often includes: username, time, "Translate", like counts at the end
@@ -334,7 +439,13 @@ class ApifyScraper:
             item.get("replies") or
             item.get("comments")
         )
-        print(f"🐛 [Debug] Engagement metrics - Likes: {likes}, Replies: {replies}")
+        shares = (
+            item.get("share_count") or
+            item.get("shareCount") or
+            item.get("shares") or
+            extracted_shares  # Fallback to shares extracted from content
+        )
+        print(f"🐛 [Debug] Engagement metrics - Likes: {likes}, Replies: {replies}, Shares: {shares}")
 
         # Check if we actually got content
         if not text_content:
@@ -346,6 +457,7 @@ class ApifyScraper:
                 text_content="",
                 likes=likes,
                 comments=replies,
+                shares=shares,
                 success=False,
                 error_message="Post has no text content (may be image/video only)"
             )
@@ -359,5 +471,6 @@ class ApifyScraper:
             text_content=str(text_content),
             likes=likes,
             comments=replies,
+            shares=shares,
             success=True
         )

@@ -28,44 +28,48 @@ class SocialDetector:
     - Threads (posts)
     """
 
-    # Facebook URL patterns
+    # Facebook URL patterns (removed ^ anchor for search capability)
     # Matches: facebook.com/*, fb.watch/*
     FACEBOOK_PATTERN = re.compile(
-        r'^https?://(www\.)?(facebook\.com|fb\.watch)/.+',
+        r'https?://(www\.)?(facebook\.com|fb\.watch)/\S+',
         re.IGNORECASE
     )
 
+    # Threads URL pattern - more permissive to handle various formats
+    # Matches: threads.net/@user, threads.com/@user/post/xxx
     THREADS_PATTERN = re.compile(
-        r'^https?://(www\.)?threads\.(net|com)/@[\w.]+(/post/[\w-]+)?',
+        r'https?://(www\.)?threads\.(net|com)/@[\w.]+(/post/[^\s?]+)?',
         re.IGNORECASE
     )
 
     def detect(self, text: str) -> SocialDetectionResult:
         """
-        Detect if the given text is a social media URL.
+        Detect if the given text contains a social media URL.
 
         Args:
-            text: The text to check (should be a URL)
+            text: The text to check (can contain URL anywhere)
 
         Returns:
-            SocialDetectionResult with platform info if detected
+            SocialDetectionResult with platform info and extracted URL if detected
         """
         text = text.strip()
 
-        # Check Facebook
-        if self.FACEBOOK_PATTERN.match(text):
+        # Check Facebook (search anywhere in text)
+        fb_match = self.FACEBOOK_PATTERN.search(text)
+        if fb_match:
             return SocialDetectionResult(
                 is_social=True,
                 platform=SocialPlatform.FACEBOOK,
-                url=text
+                url=fb_match.group(0)
             )
 
-        # Check Threads
-        if self.THREADS_PATTERN.match(text):
+        # Check Threads (search anywhere in text)
+        threads_match = self.THREADS_PATTERN.search(text)
+        if threads_match:
             return SocialDetectionResult(
                 is_social=True,
                 platform=SocialPlatform.THREADS,
-                url=text
+                url=threads_match.group(0)
             )
 
         return SocialDetectionResult(is_social=False)

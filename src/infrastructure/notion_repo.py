@@ -46,7 +46,8 @@ class NotionRepository:
         created_at: Optional[datetime] = None,
         author: Optional[str] = None,
         likes: Optional[int] = None,
-        comments: Optional[int] = None
+        comments: Optional[int] = None,
+        shares: Optional[int] = None
     ) -> SaveResult:
         """
         Save content to Notion database.
@@ -98,6 +99,7 @@ class NotionRepository:
                 }
 
             # Add social media metadata if provided
+            print(f"🐛 [Notion] Saving metadata - Author: {author}, Likes: {likes}, Comments: {comments}, Shares: {shares}")
             if author:
                 properties["Author"] = {
                     "rich_text": [{"text": {"content": author}}]
@@ -109,6 +111,10 @@ class NotionRepository:
             if comments is not None:
                 properties["Comments"] = {
                     "number": comments
+                }
+            if shares is not None:
+                properties["Shares"] = {
+                    "number": shares
                 }
 
             # Create page in database

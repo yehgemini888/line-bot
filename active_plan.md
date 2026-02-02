@@ -14,17 +14,21 @@
 
 ---
 
-## 🎯 Phase 4: 社群貼文支援 (IN PROGRESS)
+## ✅ Phase 4: 社群貼文支援 (COMPLETED)
 - [x] Task 21: 社群網址偵測 (Facebook / Threads)
 - [x] Task 22: Domain Layer 擴充 (SocialPlatform Enum)
 - [x] Task 23: SummarizeUseCase 擴充 (支援 SOCIAL ContentType)
-- [👉] Task 24: Apify Scraper 修復 (Facebook + Threads)
+- [x] Task 24: Apify Scraper 修復 (Facebook + Threads)
   - [x] 切換 Threads Actor: `apify/threads-profile-api-scraper` → `sinam7/threads-post-scraper`
   - [x] 修正 Facebook 輸出欄位對應
-  - [ ] 實際測試驗證
-- [ ] Task 25: 整合測試 (Line Bot + Social Posts)
+  - [x] 支援 Photo 類型貼文與 engagement 數據
+- [x] Task 25: URL 提取優化
+  - [x] 從「文字 + URL」混合輸入中提取 URL
+  - [x] 使用 `re.search()` 取代 `re.match()` 進行 URL 偵測
+  - [x] 修正 Threads URL 被截斷問題
+- [x] Task 26: 整合測試 (Line Bot + Social Posts)
 
-**預期成果：** 使用者可傳送 Facebook/Threads 貼文網址，自動擷取內容並摘要
+**成果：** 使用者可傳送 Facebook/Threads 貼文網址（可含額外文字），自動擷取內容並摘要
 
 ---
 
@@ -64,7 +68,7 @@
 | Phase | 名稱 | 狀態 | 進度 |
 |-------|------|------|------|
 | 1 | MVP Foundation | ✅ 完成 | 10/10 |
-| 4 | 社群貼文支援 | 👉 進行中 | 3/5 |
+| 4 | 社群貼文支援 | ✅ 完成 | 6/6 |
 | 2 | 圖片支援 | ⬜ 待開始 | 0/5 |
 | 3 | 雲端部署 | ⬜ 待開始 | 0/5 |
 | 5 | 進階功能 | ⬜ 待開始 | 0/5 |
@@ -73,15 +77,9 @@
 
 # 🚀 Current Focus
 
-**Task 24: Apify Scraper 修復**
-
-修復內容：
-1. ✅ Threads: 改用 `sinam7/threads-post-scraper` (支援單一貼文 URL，使用 `caption` 欄位)
-2. ✅ Facebook: 調整 `apify/facebook-posts-scraper` 輸出欄位對應
-
-下一步：
-- 進行實際測試驗證爬取功能
-- 完成 Phase 4 整合測試
+**Phase 4 已完成！** 可進入下一階段：
+- Phase 2: 圖片支援 (Gemini Vision)
+- Phase 3: 雲端部署 (Railway/Render)
 
 ---
 
@@ -89,17 +87,21 @@
 
 ```
 Project: Line Bot Content Saver
-Phase: 4 (社群貼文支援)
-Current Task: 24 - Apify Scraper 修復
-Status: Code updated, pending verification
+Phase: 4 (社群貼文支援) ✅ COMPLETED
+Status: All features implemented and tested
 
 Key Changes (2026-02-02):
-- Threads actor: sinam7/threads-post-scraper
-- Facebook actor: apify/facebook-posts-scraper
-- Output field mapping improved for both platforms
+- URL extraction: 支援從混合文字中提取 URL
+- Threads scraper: sinam7/threads-post-scraper (修正 URL 截斷問題)
+- Facebook scraper: apify/facebook-posts-scraper (支援 Photo 類型)
+- Social detector: 使用 search() 取代 match() 進行模式匹配
 
 Files Modified:
-- src/infrastructure/apify_scraper.py
-- spec.md
-- active_plan.md
+- src/infrastructure/line_handler.py (URL 提取邏輯)
+- src/infrastructure/social_detector.py (搜尋模式優化)
+- src/infrastructure/apify_scraper.py (爬蟲欄位對應)
+- src/usecase/summarize.py
+- src/usecase/save_to_notion.py
+- src/infrastructure/notion_repo.py
+- src/domain/content.py
 ```

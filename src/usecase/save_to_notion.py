@@ -26,7 +26,8 @@ class ContentRepository(Protocol):
         created_at: Optional[datetime] = None,
         author: Optional[str] = None,
         likes: Optional[int] = None,
-        comments: Optional[int] = None
+        comments: Optional[int] = None,
+        shares: Optional[int] = None
     ) -> "RepositorySaveResult":
         ...
 
@@ -98,7 +99,8 @@ class SaveToNotionUseCase:
             created_at=content.created_at,
             author=content.author,
             likes=content.likes,
-            comments=content.comments
+            comments=content.comments,
+            shares=content.shares
         )
 
         if not result.success:

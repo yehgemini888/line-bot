@@ -29,14 +29,10 @@ class LineMessageHandler:
     summarization and saves to Notion.
     """
 
-    # URL pattern for detection
+    # URL pattern for extraction - simple and permissive
+    # Matches https:// or http:// followed by any non-whitespace characters
     URL_PATTERN = re.compile(
-        r'^https?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain
-        r'localhost|'  # localhost
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # or ip
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$',
+        r'https?://\S+',
         re.IGNORECASE
     )
 
@@ -79,11 +75,12 @@ class LineMessageHandler:
         # Send processing message
         await self._reply(reply_token, "收到！正在處理中... ⏳")
 
-        # Detect content type
-        content_type, platform = self._analyze_content(user_text)
+        # Detect content type and extract URL if present
+        content_type, platform, extracted_url = self._analyze_content(user_text)
 
-        # Process the content
-        result = await self._process_content(user_text, content_type, platform)
+        # Process the content (use extracted URL for URL/SOCIAL types)
+        content_to_process = extracted_url if extracted_url else user_text
+        result = await self._process_content(content_to_process, content_type, platform)
 
         # Note: We can't reply twice with the same token
         # The result will be sent via push message if needed
@@ -104,12 +101,15 @@ class LineMessageHandler:
         Returns:
             Result message to send back to user
         """
-        # Detect content type
-        content_type, platform = self._analyze_content(user_text)
+        # Detect content type and extract URL if present
+        content_type, platform, extracted_url = self._analyze_content(user_text)
+
+        # Use extracted URL for URL/SOCIAL types, otherwise use original text
+        content_to_process = extracted_url if extracted_url else user_text
 
         # Step 1: Summarize
         summarize_result = await self.summarize_usecase.execute(
-            raw_input=user_text,
+            raw_input=content_to_process,
             input_type=content_type,
             social_platform=platform
         )
@@ -129,21 +129,40 @@ class LineMessageHandler:
         response = self._build_success_response(content, save_result.page_url)
         return response
 
-    def _analyze_content(self, text: str) -> tuple[ContentType, Optional[SocialPlatform]]:
-        """Analyze text to determine content type and platform."""
-        # Check social media
-        social_result = self.social_detector.detect(text)
-        if social_result.is_social:
-            print(f"🕵️ [Debug] Detected SOCIAL: {social_result.platform} ({text})")
-            return ContentType.SOCIAL, social_result.platform
+    def _extract_url(self, text: str) -> Optional[str]:
+        """Extract URL from text if present."""
+        match = self.URL_PATTERN.search(text)
+        if match:
+            url = match.group(0)
+            # Strip trailing punctuation that might have been captured
+            # (common when URL is embedded in text like "Check this: https://example.com.")
+            url = url.rstrip('.,;:!?)]\'"')
+            return url
+        return None
 
-        # Check URL
-        if self.URL_PATTERN.match(text.strip()):
-            print(f"🕵️ [Debug] Detected URL: {text}")
-            return ContentType.URL, None
-            
-        print(f"🕵️ [Debug] Detected TEXT: {text[:20]}...")
-        return ContentType.TEXT, None
+    def _analyze_content(self, text: str) -> tuple[ContentType, Optional[SocialPlatform], Optional[str]]:
+        """
+        Analyze text to determine content type, platform, and extract URL.
+
+        Returns:
+            tuple of (ContentType, SocialPlatform or None, extracted_url or None)
+        """
+        # First, extract URL from anywhere in the text
+        extracted_url = self._extract_url(text)
+
+        if extracted_url:
+            # Check if it's a social media URL
+            social_result = self.social_detector.detect(extracted_url)
+            if social_result.is_social:
+                print(f"🕵️ [Debug] Detected SOCIAL: {social_result.platform} (URL: {extracted_url})")
+                return ContentType.SOCIAL, social_result.platform, extracted_url
+
+            # It's a regular URL
+            print(f"🕵️ [Debug] Detected URL: {extracted_url}")
+            return ContentType.URL, None, extracted_url
+
+        print(f"🕵️ [Debug] Detected TEXT: {text[:50]}...")
+        return ContentType.TEXT, None, None
 
     async def _process_content(
         self, 

@@ -4,7 +4,7 @@
 一個 Line Bot，接收使用者傳送的文字、網址或社群貼文，
 使用 Gemini AI 進行摘要分析，並儲存至 Notion 資料庫。
 
-## 2. Current Status: 🚀 Phase 4 In Progress
+## 2. Current Status: ✅ Phase 4 Completed
 
 ### 已完成功能
 - ✅ 文字訊息摘要
@@ -13,7 +13,8 @@
 - ✅ 儲存至 Notion Database
 - ✅ 本地開發環境 (ngrok / VS Code Port Forwarding)
 - ✅ 社群貼文偵測 (Facebook / Threads)
-- 🔧 社群貼文爬取 (Apify) - 修復中
+- ✅ 社群貼文爬取 (Apify)
+- ✅ 智慧 URL 提取 (支援「文字 + URL」混合輸入)
 
 ### 待開發功能
 - ⬜ 圖片處理 (OCR / Vision AI)
@@ -158,9 +159,14 @@ class Content:
 ## 10. Data Flow
 ```
 User sends message to Line Bot
+(可包含純文字、純 URL、或「文字 + URL」混合)
             │
             ▼
     Line Webhook (/webhook)
+            │
+            ▼
+    Extract URL from Text
+    (使用 re.search() 從任意位置提取 URL)
             │
             ▼
     Detect Content Type
@@ -192,7 +198,16 @@ User sends message to Line Bot
 ```
 
 ## 11. Apify Actors (社群貼文爬取)
-| Platform | Actor ID                        | Input                   | Key Output Fields       |
-|----------|--------------------------------|-------------------------|-------------------------|
-| Facebook | apify/facebook-posts-scraper   | startUrls: [{url}]     | text, pageName, likes   |
-| Threads  | sinam7/threads-post-scraper    | urls: [url]            | caption, user, like_count|
+| Platform | Actor ID                        | Input                   | Key Output Fields                |
+|----------|--------------------------------|-------------------------|----------------------------------|
+| Facebook | apify/facebook-posts-scraper   | startUrls: [{url}]     | text, user.name, likes, comments |
+| Threads  | sinam7/threads-post-scraper    | url: string            | content, authorId, like_count    |
+
+### URL 提取邏輯
+- 使用 `re.search(r'https?://\S+')` 從任意位置提取 URL
+- 自動去除結尾標點符號 (`.`, `,`, `;` 等)
+- 支援「文字 + URL」混合輸入，例如：
+  ```
+  ▋GitHub 專案連結
+  https://github.com/example/repo
+  ```

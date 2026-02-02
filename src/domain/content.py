@@ -43,6 +43,7 @@ class Content:
         author: Author name (for social media posts)
         likes: Like count (for social media posts)
         comments: Comment count (for social media posts)
+        shares: Share count (for social media posts)
     """
     content_type: ContentType
     raw_content: str
@@ -56,6 +57,7 @@ class Content:
     author: Optional[str] = None
     likes: Optional[int] = None
     comments: Optional[int] = None
+    shares: Optional[int] = None
 
     def is_url(self) -> bool:
         """Check if content is a URL type."""

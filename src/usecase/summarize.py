@@ -64,7 +64,8 @@ class SocialScrapeResult:
     text_content: str
     likes: Optional[int]
     comments: Optional[int]
-    success: bool
+    shares: Optional[int] = None
+    success: bool = False
     error_message: Optional[str] = None
 
 
@@ -165,9 +166,12 @@ class SummarizeUseCase:
             content.raw_content = scrape_result.text_content
 
             # Store social media metadata in content entity
+            print(f"🐛 [Summarize] Scrape result - Likes: {scrape_result.likes}, Comments: {scrape_result.comments}, Shares: {scrape_result.shares}")
             content.author = scrape_result.author
             content.likes = scrape_result.likes
             content.comments = scrape_result.comments
+            content.shares = scrape_result.shares
+            print(f"🐛 [Summarize] Content entity - Likes: {content.likes}, Comments: {content.comments}, Shares: {content.shares}")
 
             # Add metadata to summary context for AI
             meta_info = []
