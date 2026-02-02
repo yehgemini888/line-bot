@@ -26,3 +26,7 @@ Thumbs.db
 
 # ngrok
 ngrok.yml
+
+# ngrok binary
+ngrok
+ngrok-*.tgz
