@@ -24,6 +24,7 @@ class ContentType(Enum):
     URL = "url"
     SOCIAL = "social"
     IMAGE = "image"
+    YOUTUBE = "youtube"
 
 
 @dataclass
@@ -61,6 +62,8 @@ class Content:
     shares: Optional[int] = None
     image_url: Optional[str] = None
     image_description: Optional[str] = None
+    video_duration: Optional[str] = None  # For YouTube videos (e.g., "10:30")
+    channel_name: Optional[str] = None    # For YouTube videos
 
     def is_url(self) -> bool:
         """Check if content is a URL type."""
@@ -77,6 +80,10 @@ class Content:
     def is_image(self) -> bool:
         """Check if content is an IMAGE type."""
         return self.content_type == ContentType.IMAGE
+
+    def is_youtube(self) -> bool:
+        """Check if content is a YOUTUBE type."""
+        return self.content_type == ContentType.YOUTUBE
 
 
 def create_text_content(text: str) -> Content:
@@ -132,4 +139,33 @@ def create_image_content(
         title=title,
         summary=image_description,
         tags=tags or []
+    )
+
+
+def create_youtube_content(
+    url: str,
+    title: Optional[str] = None,
+    channel_name: Optional[str] = None,
+    video_duration: Optional[str] = None
+) -> Content:
+    """
+    Factory function to create a YOUTUBE type content.
+
+    Args:
+        url: YouTube video URL
+        title: Video title
+        channel_name: YouTube channel name
+        video_duration: Video duration (e.g., "10:30")
+
+    Returns:
+        Content entity with YOUTUBE type
+    """
+    return Content(
+        content_type=ContentType.YOUTUBE,
+        raw_content=url,
+        source_url=url,
+        title=title,
+        author=channel_name,
+        channel_name=channel_name,
+        video_duration=video_duration
     )

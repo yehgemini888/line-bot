@@ -42,6 +42,13 @@ class SocialDetector:
         re.IGNORECASE
     )
 
+    # YouTube URL patterns
+    # Matches: youtube.com/watch, youtu.be/xxx, youtube.com/shorts/xxx
+    YOUTUBE_PATTERN = re.compile(
+        r'https?://(www\.)?(youtube\.com/(watch\?v=|shorts/|embed/)|youtu\.be/)[a-zA-Z0-9_-]+',
+        re.IGNORECASE
+    )
+
     def detect(self, text: str) -> SocialDetectionResult:
         """
         Detect if the given text contains a social media URL.
@@ -77,3 +84,12 @@ class SocialDetector:
     def is_social_url(self, text: str) -> bool:
         """Quick check if text is a social media URL."""
         return self.detect(text).is_social
+
+    def is_youtube_url(self, text: str) -> bool:
+        """Check if text contains a YouTube URL."""
+        return bool(self.YOUTUBE_PATTERN.search(text.strip()))
+
+    def extract_youtube_url(self, text: str) -> Optional[str]:
+        """Extract YouTube URL from text."""
+        match = self.YOUTUBE_PATTERN.search(text.strip())
+        return match.group(0) if match else None

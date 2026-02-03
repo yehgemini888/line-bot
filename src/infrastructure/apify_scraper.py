@@ -266,6 +266,31 @@ class ApifyScraper:
         print(f"🐛 [Debug] Facebook Item Keys: {list(item.keys())}")
         print(f"🐛 [Debug] Facebook Item: {item}")
 
+        # Check if Apify returned an error object (e.g. blocked, private content)
+        if "error" in item:
+            error_type = item.get("error", "unknown")
+            error_desc = item.get("errorDescription", "Unknown error")
+            print(f"⚠️ [Apify] Facebook scraper returned error: {error_type} - {error_desc}")
+            
+            # Determine content type from URL for better user message
+            content_type = "貼文"
+            if "/reel/" in url or "/share/r/" in url:
+                content_type = "Reel 短影片"
+            elif "/watch" in url or "/share/v/" in url or "/videos/" in url:
+                content_type = "影片"
+            
+            # Return a user-friendly message
+            return SocialScrapeResult(
+                platform=SocialPlatform.FACEBOOK,
+                url=url,
+                author=None,
+                text_content=f"[無法擷取此 Facebook {content_type}]\n\n可能原因：\n• 內容可能已設為私人\n• 內容可能有地區限制\n• 連結可能已失效\n\n請直接開啟連結查看：\n{url}",
+                likes=None,
+                comments=None,
+                success=True,  # Mark as success so it still saves to Notion with the link
+                error_message=f"{error_type}: {error_desc}"
+            )
+
         # Check if this is a Photo type (different structure than Post)
         item_type = item.get("__typename", "")
         is_photo = item_type == "Photo"

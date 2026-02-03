@@ -60,7 +60,9 @@ class NotionRepository:
         comments: Optional[int] = None,
         shares: Optional[int] = None,
         image_url: Optional[str] = None,
-        image_description: Optional[str] = None
+        image_description: Optional[str] = None,
+        video_duration: Optional[str] = None,
+        channel_name: Optional[str] = None
     ) -> SaveResult:
         """
         Save content to Notion database.
@@ -69,10 +71,12 @@ class NotionRepository:
             title: Content title
             summary: AI-generated summary
             content: Original content
-            content_type: "text" or "url"
+            content_type: "text", "url", "social", "image", or "youtube"
             tags: List of tags
             source_url: Source URL if applicable
             created_at: Creation timestamp
+            video_duration: Video duration (for YouTube)
+            channel_name: Channel name (for YouTube)
 
         Returns:
             SaveResult with page ID and URL
@@ -132,6 +136,16 @@ class NotionRepository:
             if image_description:
                 properties["Image Description"] = {
                     "rich_text": self._split_text(image_description)
+                }
+
+            # Add YouTube properties if provided
+            if video_duration:
+                properties["Duration"] = {
+                    "rich_text": self._split_text(video_duration)
+                }
+            if channel_name:
+                properties["Channel"] = {
+                    "rich_text": self._split_text(channel_name)
                 }
 
             # Create page in database

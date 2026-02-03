@@ -46,7 +46,9 @@ class LineMessageHandler:
         save_usecase: SaveToNotionUseCase,
         social_detector: SocialDetector,
         image_detector: Optional[ImageDetector] = None,
-        process_image_usecase = None
+        process_image_usecase = None,
+        youtube_service = None,
+        ai_service = None
     ):
         """
         Initialize the handler.
@@ -58,6 +60,8 @@ class LineMessageHandler:
             social_detector: Detector for social media URLs
             image_detector: Detector for image URLs
             process_image_usecase: Use case for processing images
+            youtube_service: Service for fetching YouTube video info and captions
+            ai_service: AI service for summarization (Gemini/OpenAI)
         """
         configuration = Configuration(access_token=channel_access_token)
         self.api_client = AsyncApiClient(configuration)
@@ -68,6 +72,8 @@ class LineMessageHandler:
         self.social_detector = social_detector
         self.image_detector = image_detector or ImageDetector()
         self.process_image_usecase = process_image_usecase
+        self.youtube_service = youtube_service
+        self.ai_service = ai_service
 
     async def handle_message(self, event: MessageEvent) -> None:
         """
@@ -113,6 +119,14 @@ class LineMessageHandler:
         """
         # Detect content type and extract URL if present
         content_type, platform, extracted_url = self._analyze_content(user_text)
+
+        # Handle YouTube separately (needs youtube_service)
+        if content_type == ContentType.YOUTUBE and extracted_url:
+            if hasattr(self, 'youtube_service') and self.youtube_service:
+                return await self.handle_youtube_with_push(user_id, extracted_url)
+            else:
+                # Fall back to regular URL processing if youtube_service not available
+                content_type = ContentType.URL
 
         # Use extracted URL for URL/SOCIAL types, otherwise use original text
         content_to_process = extracted_url if extracted_url else user_text
@@ -166,6 +180,11 @@ class LineMessageHandler:
             if image_result.is_image:
                 print(f"🖼️ [Debug] Detected IMAGE URL: {extracted_url}")
                 return ContentType.IMAGE, None, extracted_url
+
+            # Check if it's a YouTube URL (before social media)
+            if self.social_detector.is_youtube_url(extracted_url):
+                print(f"🎬 [Debug] Detected YOUTUBE URL: {extracted_url}")
+                return ContentType.YOUTUBE, None, extracted_url
 
             # Check if it's a social media URL
             social_result = self.social_detector.detect(extracted_url)
@@ -436,6 +455,125 @@ class LineMessageHandler:
 🏷️ 標籤：{tags_str}
 
 🖼️ 圖片連結：{content.image_url}"""
+
+        if page_url:
+            response += f"\n\n📄 Notion 連結：{page_url}"
+
+        return response
+
+    async def handle_youtube_with_push(
+        self,
+        user_id: str,
+        youtube_url: str
+    ) -> str:
+        """
+        Handle YouTube URL and return result.
+
+        Args:
+            user_id: Line user ID for push message
+            youtube_url: YouTube video URL
+
+        Returns:
+            Result message to send back to user
+        """
+        from src.domain.content import create_youtube_content
+
+        if not self.youtube_service:
+            return "❌ YouTube 功能未啟用"
+
+        if not self.ai_service:
+            return "❌ AI 服務未設定"
+
+        print(f"🎬 [YouTube] Processing: {youtube_url}")
+
+        # Step 1: Get video info and captions
+        video_info = await self.youtube_service.get_video_info(youtube_url)
+
+        if not video_info:
+            return "❌ 無法取得 YouTube 影片資訊，請確認網址是否正確"
+
+        # Step 2: Prepare content for AI summarization
+        if video_info.has_captions and video_info.captions:
+            # Use captions for deep summary
+            text_to_summarize = f"""影片標題：{video_info.title}
+頻道：{video_info.channel_name}
+時長：{video_info.duration}
+
+字幕內容：
+{video_info.captions[:15000]}"""  # Limit to avoid token limits
+            has_captions = True
+        else:
+            # Use title + description for basic summary
+            text_to_summarize = f"""影片標題：{video_info.title}
+頻道：{video_info.channel_name}
+時長：{video_info.duration}
+
+影片描述：
+{video_info.description[:3000] if video_info.description else '(無描述)'}"""
+            has_captions = False
+
+        print(f"📝 [YouTube] Summarizing (has_captions={has_captions})")
+
+        # Step 3: AI Summarization
+        summary_result = await self.ai_service.summarize(
+            content=text_to_summarize,
+            content_type="youtube"
+        )
+
+        if not summary_result.success:
+            return f"❌ AI 摘要失敗：{summary_result.error_message}"
+
+        # Step 4: Create content entity
+        content = create_youtube_content(
+            url=youtube_url,
+            title=video_info.title,
+            channel_name=video_info.channel_name,
+            video_duration=video_info.duration
+        )
+        content.summary = summary_result.summary
+        content.title = summary_result.title or video_info.title
+        content.tags = summary_result.tags
+
+        # Step 5: Save to Notion
+        save_result = await self.save_usecase.execute(content)
+
+        if not save_result.success:
+            return f"❌ 儲存失敗：{save_result.error_message}"
+
+        # Build success response
+        return self._build_youtube_success_response(
+            content, 
+            video_info, 
+            has_captions,
+            save_result.page_url
+        )
+
+    def _build_youtube_success_response(
+        self,
+        content,
+        video_info,
+        has_captions: bool,
+        page_url: Optional[str] = None
+    ) -> str:
+        """Build success response message for YouTube processing."""
+        tags_str = ", ".join(content.tags) if content.tags else "無"
+
+        # Add warning if no captions
+        caption_note = ""
+        if not has_captions:
+            caption_note = "\n\n⚠️ 此影片無字幕，僅能提供基本摘要"
+
+        response = f"""✅ YouTube 影片已儲存至 Notion！
+
+🎬 頻道：{video_info.channel_name}
+⏱️ 時長：{video_info.duration}
+
+📌 標題：{content.title}
+
+📝 摘要：
+{content.summary}
+
+🏷️ 標籤：{tags_str}{caption_note}"""
 
         if page_url:
             response += f"\n\n📄 Notion 連結：{page_url}"

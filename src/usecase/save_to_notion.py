@@ -27,7 +27,9 @@ class ContentRepository(Protocol):
         author: Optional[str] = None,
         likes: Optional[int] = None,
         comments: Optional[int] = None,
-        shares: Optional[int] = None
+        shares: Optional[int] = None,
+        video_duration: Optional[str] = None,
+        channel_name: Optional[str] = None
     ) -> "RepositorySaveResult":
         ...
 
@@ -100,7 +102,9 @@ class SaveToNotionUseCase:
             author=content.author,
             likes=content.likes,
             comments=content.comments,
-            shares=content.shares
+            shares=content.shares,
+            video_duration=getattr(content, 'video_duration', None),
+            channel_name=getattr(content, 'channel_name', None)
         )
 
         if not result.success:

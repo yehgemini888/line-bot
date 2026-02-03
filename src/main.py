@@ -28,6 +28,7 @@ from src.infrastructure.social_detector import SocialDetector
 from src.infrastructure.apify_scraper import ApifyScraper
 from src.infrastructure.image_detector import ImageDetector
 from src.infrastructure.drive_service import GoogleDriveService
+from src.infrastructure.youtube_service import YouTubeService
 
 # UseCase imports
 from src.usecase.summarize import SummarizeUseCase
@@ -137,6 +138,7 @@ def get_handler() -> LineMessageHandler:
         image_detector = ImageDetector()
         apify_scraper = ApifyScraper(api_token=APIFY_API_TOKEN)
         ai_service = get_ai_service()
+        youtube_service = YouTubeService()
         notion_repo = NotionRepository(
             api_key=NOTION_API_KEY,
             database_id=NOTION_DATABASE_ID
@@ -158,7 +160,9 @@ def get_handler() -> LineMessageHandler:
             save_usecase=save_usecase,
             social_detector=social_detector,
             image_detector=image_detector,
-            process_image_usecase=process_image_usecase
+            process_image_usecase=process_image_usecase,
+            youtube_service=youtube_service,
+            ai_service=ai_service
         )
     return _handler
 
