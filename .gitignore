@@ -34,3 +34,7 @@ ngrok-*.tgz
 # Google OAuth credentials (sensitive)
 credentials.json
 token.json
+
+# Agile Boardroom artifacts
+active_plan.md
+spec.md

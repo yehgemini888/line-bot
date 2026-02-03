@@ -5,6 +5,7 @@ Assembles all components and exposes webhook endpoint.
 """
 
 import os
+import base64
 import asyncio
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -21,6 +22,7 @@ from src.infrastructure.web_scraper import WebScraper
 from src.infrastructure.gemini_service import GeminiService
 from src.infrastructure.openai_service import OpenAIService
 from src.infrastructure.notion_repo import NotionRepository
+from src.infrastructure.fallback_ai_service import FallbackAIService
 from src.infrastructure.line_handler import LineMessageHandler
 from src.infrastructure.social_detector import SocialDetector
 from src.infrastructure.apify_scraper import ApifyScraper
@@ -41,7 +43,7 @@ LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").lower()  # "gemini" or "openai"
+AI_PROVIDER = os.getenv("AI_PROVIDER", "auto").lower()  # "auto", "gemini", or "openai"
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
@@ -60,7 +62,10 @@ def validate_config():
     }
 
     # Validate AI provider configuration
-    if AI_PROVIDER == "openai":
+    if AI_PROVIDER == "auto":
+        required["GEMINI_API_KEY"] = GEMINI_API_KEY
+        required["OPENAI_API_KEY"] = OPENAI_API_KEY
+    elif AI_PROVIDER == "openai":
         required["OPENAI_API_KEY"] = OPENAI_API_KEY
     else:
         required["GEMINI_API_KEY"] = GEMINI_API_KEY
@@ -72,7 +77,12 @@ def validate_config():
 
 def get_ai_service():
     """Get AI service based on AI_PROVIDER setting."""
-    if AI_PROVIDER == "openai":
+    if AI_PROVIDER == "auto":
+        return FallbackAIService(
+            gemini_api_key=GEMINI_API_KEY,
+            openai_api_key=OPENAI_API_KEY
+        )
+    elif AI_PROVIDER == "openai":
         return OpenAIService(api_key=OPENAI_API_KEY)
     else:
         return GeminiService(api_key=GEMINI_API_KEY)
@@ -150,11 +160,25 @@ def get_parser() -> WebhookParser:
     return _parser
 
 
+def restore_google_credentials():
+    """Restore credentials.json from Base64 environment variable (for cloud deployment)."""
+    global GOOGLE_SERVICE_ACCOUNT_FILE
+    creds_b64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
+    if creds_b64:
+        creds_path = "/tmp/credentials.json"
+        with open(creds_path, "w") as f:
+            f.write(base64.b64decode(creds_b64).decode("utf-8"))
+        GOOGLE_SERVICE_ACCOUNT_FILE = creds_path
+        os.environ["GOOGLE_SERVICE_ACCOUNT_FILE"] = creds_path
+        print(f"☁️ Google credentials restored to {creds_path}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     global _image_enabled
     # Startup
+    restore_google_credentials()
     validate_config()
     print("🚀 Line Bot Content Saver started!")
     print(f"📦 Notion Database ID: {NOTION_DATABASE_ID[:8]}...")
@@ -311,9 +335,10 @@ async def process_image_message(
 
 if __name__ == "__main__":
     import uvicorn
+    port = int(os.getenv("PORT", "8000"))
     uvicorn.run(
         "src.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         reload=True
     )
