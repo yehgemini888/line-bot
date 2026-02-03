@@ -234,9 +234,15 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
     try:
         events = parser.parse(body_str, signature)
     except InvalidSignatureError:
+        print("❌ Invalid signature")
         raise HTTPException(status_code=400, detail="Invalid signature")
+    except Exception as e:
+        print(f"❌ Error parsing webhook events: {e}")
+        # Return 200 OK to Line even if parsing fails to avoid retry storms
+        return {"status": "ok", "error": str(e)}
 
     # Queue events for background processing (don't initialize handler here)
+    print(f"📋 Received {len(events)} events")
     for event in events:
         if isinstance(event, MessageEvent):
             if isinstance(event.message, TextMessageContent):
