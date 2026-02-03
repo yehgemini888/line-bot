@@ -6,7 +6,7 @@ uvicorn[standard]==0.27.0
 line-bot-sdk==3.5.1
 
 # Google Gemini AI
-google-generativeai==0.3.2
+google-generativeai>=0.8.3
 
 # Notion Client
 notion-client==2.2.1
@@ -22,3 +22,8 @@ python-dotenv==1.0.0
 
 # Apify (Social Media Scraping)
 apify-client>=1.0.0
+
+# Google Drive API (Image Upload)
+google-api-python-client>=2.100.0
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0

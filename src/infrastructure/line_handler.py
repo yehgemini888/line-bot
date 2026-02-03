@@ -5,7 +5,9 @@ Handles incoming Line messages and coordinates with use cases.
 """
 
 import re
-from typing import Optional
+import uuid
+import httpx
+from typing import Optional, Tuple
 from linebot.v3.messaging import (
     AsyncApiClient,
     AsyncMessagingApi,
@@ -15,10 +17,11 @@ from linebot.v3.messaging import (
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
-from src.domain.content import ContentType, SocialPlatform
+from src.domain.content import Content, ContentType, SocialPlatform
 from src.usecase.summarize import SummarizeUseCase
 from src.usecase.save_to_notion import SaveToNotionUseCase
 from src.infrastructure.social_detector import SocialDetector
+from src.infrastructure.image_detector import ImageDetector
 
 
 class LineMessageHandler:
@@ -41,7 +44,9 @@ class LineMessageHandler:
         channel_access_token: str,
         summarize_usecase: SummarizeUseCase,
         save_usecase: SaveToNotionUseCase,
-        social_detector: SocialDetector
+        social_detector: SocialDetector,
+        image_detector: Optional[ImageDetector] = None,
+        process_image_usecase = None
     ):
         """
         Initialize the handler.
@@ -51,13 +56,18 @@ class LineMessageHandler:
             summarize_usecase: Use case for summarization
             save_usecase: Use case for saving to Notion
             social_detector: Detector for social media URLs
+            image_detector: Detector for image URLs
+            process_image_usecase: Use case for processing images
         """
         configuration = Configuration(access_token=channel_access_token)
         self.api_client = AsyncApiClient(configuration)
         self.messaging_api = AsyncMessagingApi(self.api_client)
+        self.channel_access_token = channel_access_token
         self.summarize_usecase = summarize_usecase
         self.save_usecase = save_usecase
         self.social_detector = social_detector
+        self.image_detector = image_detector or ImageDetector()
+        self.process_image_usecase = process_image_usecase
 
     async def handle_message(self, event: MessageEvent) -> None:
         """
@@ -140,7 +150,7 @@ class LineMessageHandler:
             return url
         return None
 
-    def _analyze_content(self, text: str) -> tuple[ContentType, Optional[SocialPlatform], Optional[str]]:
+    def _analyze_content(self, text: str) -> Tuple[ContentType, Optional[SocialPlatform], Optional[str]]:
         """
         Analyze text to determine content type, platform, and extract URL.
 
@@ -151,6 +161,12 @@ class LineMessageHandler:
         extracted_url = self._extract_url(text)
 
         if extracted_url:
+            # Check if it's an image URL
+            image_result = self.image_detector.detect(extracted_url)
+            if image_result.is_image:
+                print(f"🖼️ [Debug] Detected IMAGE URL: {extracted_url}")
+                return ContentType.IMAGE, None, extracted_url
+
             # Check if it's a social media URL
             social_result = self.social_detector.detect(extracted_url)
             if social_result.is_social:
@@ -235,3 +251,193 @@ class LineMessageHandler:
             )
         except Exception as e:
             print(f"Failed to push message: {e}")
+
+    async def download_line_image(self, message_id: str) -> Optional[bytes]:
+        """
+        Download image from Line servers.
+
+        Args:
+            message_id: Line message ID containing the image
+
+        Returns:
+            Image binary data or None if failed
+        """
+        try:
+            url = f"https://api-data.line.me/v2/bot/message/{message_id}/content"
+            headers = {"Authorization": f"Bearer {self.channel_access_token}"}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers, timeout=30.0)
+
+                if response.status_code == 200:
+                    print(f"📥 [Line] Downloaded image: {len(response.content)} bytes")
+                    return response.content
+                else:
+                    print(f"❌ [Line] Failed to download image: {response.status_code}")
+                    return None
+
+        except Exception as e:
+            print(f"❌ [Line] Error downloading image: {e}")
+            return None
+
+    async def download_image_from_url(self, url: str) -> Optional[bytes]:
+        """
+        Download image from a URL.
+
+        Args:
+            url: Image URL to download
+
+        Returns:
+            Image binary data or None if failed
+        """
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                response = await client.get(url, timeout=30.0)
+
+                if response.status_code == 200:
+                    content_type = response.headers.get("content-type", "")
+                    if "image" in content_type or self._is_image_response(response.content):
+                        print(f"📥 [HTTP] Downloaded image from URL: {len(response.content)} bytes")
+                        return response.content
+                    else:
+                        print(f"⚠️ [HTTP] URL did not return image content: {content_type}")
+                        return None
+                else:
+                    print(f"❌ [HTTP] Failed to download image: {response.status_code}")
+                    return None
+
+        except Exception as e:
+            print(f"❌ [HTTP] Error downloading image: {e}")
+            return None
+
+    def _is_image_response(self, content: bytes) -> bool:
+        """Check if response content is an image based on magic bytes."""
+        if len(content) < 8:
+            return False
+
+        # Check common image magic bytes
+        # JPEG: FF D8 FF
+        if content[:3] == b'\xff\xd8\xff':
+            return True
+        # PNG: 89 50 4E 47 0D 0A 1A 0A
+        if content[:8] == b'\x89PNG\r\n\x1a\n':
+            return True
+        # GIF: 47 49 46 38
+        if content[:4] == b'GIF8':
+            return True
+        # WebP: 52 49 46 46 ... 57 45 42 50
+        if content[:4] == b'RIFF' and len(content) > 11 and content[8:12] == b'WEBP':
+            return True
+
+        return False
+
+    async def handle_image_message_with_push(
+        self,
+        user_id: str,
+        message_id: str
+    ) -> str:
+        """
+        Handle Line image message and return result.
+
+        Args:
+            user_id: Line user ID for push message
+            message_id: Line message ID containing the image
+
+        Returns:
+            Result message to send back to user
+        """
+        if not self.process_image_usecase:
+            return "❌ 圖片處理功能未啟用"
+
+        # Download image from Line
+        image_data = await self.download_line_image(message_id)
+        if not image_data:
+            return "❌ 無法下載圖片"
+
+        # Generate filename
+        filename = f"line_image_{uuid.uuid4().hex[:8]}.jpg"
+
+        # Process image
+        result = await self.process_image_usecase.execute(
+            image_data=image_data,
+            filename=filename,
+            mime_type="image/jpeg"
+        )
+
+        if not result.success:
+            return f"❌ 處理失敗：{result.error_message}"
+
+        return self._build_image_success_response(result.content, result.page_url)
+
+    async def handle_image_url_with_push(
+        self,
+        user_id: str,
+        image_url: str
+    ) -> str:
+        """
+        Handle image URL and return result.
+
+        Args:
+            user_id: Line user ID for push message
+            image_url: URL of the image
+
+        Returns:
+            Result message to send back to user
+        """
+        if not self.process_image_usecase:
+            return "❌ 圖片處理功能未啟用"
+
+        # Download image from URL
+        image_data = await self.download_image_from_url(image_url)
+        if not image_data:
+            return "❌ 無法下載圖片，請確認網址是否正確"
+
+        # Determine MIME type from URL
+        mime_type = self.image_detector.get_mime_type(image_url)
+
+        # Generate filename with appropriate extension
+        ext = ".jpg"
+        if "png" in mime_type:
+            ext = ".png"
+        elif "gif" in mime_type:
+            ext = ".gif"
+        elif "webp" in mime_type:
+            ext = ".webp"
+
+        filename = f"url_image_{uuid.uuid4().hex[:8]}{ext}"
+
+        # Process image
+        result = await self.process_image_usecase.execute(
+            image_data=image_data,
+            filename=filename,
+            mime_type=mime_type
+        )
+
+        if not result.success:
+            return f"❌ 處理失敗：{result.error_message}"
+
+        return self._build_image_success_response(result.content, result.page_url)
+
+    def _build_image_success_response(
+        self,
+        content: Content,
+        page_url: Optional[str] = None
+    ) -> str:
+        """Build success response message for image processing."""
+        tags_str = ", ".join(content.tags) if content.tags else "無"
+
+        response = f"""✅ 圖片已儲存至 Notion！
+
+📌 標題：{content.title}
+
+📝 描述：
+{content.image_description or content.summary}
+
+🏷️ 標籤：{tags_str}
+
+🖼️ 圖片連結：{content.image_url}"""
+
+        if page_url:
+            response += f"\n\n📄 Notion 連結：{page_url}"
+
+        return response

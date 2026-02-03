@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from linebot.v3.webhook import WebhookParser
-from linebot.v3.webhooks import MessageEvent, TextMessageContent
+from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent
 from linebot.v3.exceptions import InvalidSignatureError
 
 # Load environment variables
@@ -23,10 +23,16 @@ from src.infrastructure.notion_repo import NotionRepository
 from src.infrastructure.line_handler import LineMessageHandler
 from src.infrastructure.social_detector import SocialDetector
 from src.infrastructure.apify_scraper import ApifyScraper
+from src.infrastructure.image_detector import ImageDetector
+from src.infrastructure.drive_service import GoogleDriveService
 
 # UseCase imports
 from src.usecase.summarize import SummarizeUseCase
 from src.usecase.save_to_notion import SaveToNotionUseCase
+from src.usecase.process_image import ProcessImageUseCase
+
+# Domain imports
+from src.domain.content import ContentType
 
 
 # Configuration
@@ -36,6 +42,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
+GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 
 
 def validate_config():
@@ -56,6 +64,29 @@ def validate_config():
 # Initialize components (lazy loading)
 _handler: LineMessageHandler = None
 _parser: WebhookParser = None
+_process_image_usecase: ProcessImageUseCase = None
+_image_enabled: bool = False
+
+
+def get_process_image_usecase() -> ProcessImageUseCase:
+    """Get or create the process image use case."""
+    global _process_image_usecase, _image_enabled
+    if _process_image_usecase is None and _image_enabled:
+        gemini_service = GeminiService(api_key=GEMINI_API_KEY)
+        drive_service = GoogleDriveService(
+            credentials_file=GOOGLE_SERVICE_ACCOUNT_FILE,
+            folder_id=GOOGLE_DRIVE_FOLDER_ID
+        )
+        notion_repo = NotionRepository(
+            api_key=NOTION_API_KEY,
+            database_id=NOTION_DATABASE_ID
+        )
+        _process_image_usecase = ProcessImageUseCase(
+            image_analyzer=gemini_service,
+            image_uploader=drive_service,
+            repository=notion_repo
+        )
+    return _process_image_usecase
 
 
 def get_handler() -> LineMessageHandler:
@@ -65,6 +96,7 @@ def get_handler() -> LineMessageHandler:
         # Infrastructure
         web_scraper = WebScraper()
         social_detector = SocialDetector()
+        image_detector = ImageDetector()
         apify_scraper = ApifyScraper(api_token=APIFY_API_TOKEN)
         gemini_service = GeminiService(api_key=GEMINI_API_KEY)
         notion_repo = NotionRepository(
@@ -79,13 +111,16 @@ def get_handler() -> LineMessageHandler:
             social_scraper=apify_scraper
         )
         save_usecase = SaveToNotionUseCase(repository=notion_repo)
+        process_image_usecase = get_process_image_usecase()
 
         # Handler
         _handler = LineMessageHandler(
             channel_access_token=LINE_CHANNEL_ACCESS_TOKEN,
             summarize_usecase=summarize_usecase,
             save_usecase=save_usecase,
-            social_detector=social_detector
+            social_detector=social_detector,
+            image_detector=image_detector,
+            process_image_usecase=process_image_usecase
         )
     return _handler
 
@@ -101,10 +136,22 @@ def get_parser() -> WebhookParser:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
+    global _image_enabled
     # Startup
     validate_config()
     print("🚀 Line Bot Content Saver started!")
     print(f"📦 Notion Database ID: {NOTION_DATABASE_ID[:8]}...")
+
+    # Check if image processing is configured
+    if GOOGLE_SERVICE_ACCOUNT_FILE and GOOGLE_DRIVE_FOLDER_ID:
+        if os.path.exists(GOOGLE_SERVICE_ACCOUNT_FILE):
+            _image_enabled = True
+            print("🖼️ Image processing: ENABLED")
+        else:
+            print(f"⚠️ Image processing: DISABLED (service account file not found: {GOOGLE_SERVICE_ACCOUNT_FILE})")
+    else:
+        print("⚠️ Image processing: DISABLED (missing GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_DRIVE_FOLDER_ID)")
+
     yield
     # Shutdown
     print("👋 Shutting down...")
@@ -149,14 +196,23 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
 
     # Queue events for background processing (don't initialize handler here)
     for event in events:
-        if isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
-            # Process in background - handler will be initialized there
-            background_tasks.add_task(
-                process_message,
-                user_id=event.source.user_id,
-                text=event.message.text.strip(),
-                reply_token=event.reply_token
-            )
+        if isinstance(event, MessageEvent):
+            if isinstance(event.message, TextMessageContent):
+                # Process text message in background
+                background_tasks.add_task(
+                    process_message,
+                    user_id=event.source.user_id,
+                    text=event.message.text.strip(),
+                    reply_token=event.reply_token
+                )
+            elif isinstance(event.message, ImageMessageContent):
+                # Process image message in background
+                background_tasks.add_task(
+                    process_image_message,
+                    user_id=event.source.user_id,
+                    message_id=event.message.id,
+                    reply_token=event.reply_token
+                )
 
     # Return immediately - Line requires fast response
     return {"status": "ok"}
@@ -181,8 +237,15 @@ async def process_message(
     try:
         print(f"⚙️ Processing message from {user_id}: {text[:50]}...")
 
-        # Process and get result
-        result = await handler.handle_message_with_push(user_id, text)
+        # Check if text contains an image URL
+        content_type, _, image_url = handler._analyze_content(text)
+
+        if content_type == ContentType.IMAGE and image_url:
+            # Process as image URL
+            result = await handler.handle_image_url_with_push(user_id, image_url)
+        else:
+            # Process as normal text/URL
+            result = await handler.handle_message_with_push(user_id, text)
 
         # Send result via push message
         await handler.push_message(user_id, result)
@@ -191,6 +254,39 @@ async def process_message(
 
     except Exception as e:
         print(f"❌ Error processing message: {e}")
+        error_msg = f"❌ 發生錯誤：{str(e)}"
+        await handler.push_message(user_id, error_msg)
+
+
+async def process_image_message(
+    user_id: str,
+    message_id: str,
+    reply_token: str
+):
+    """
+    Process image message in background.
+
+    Args:
+        user_id: User ID for push message
+        message_id: Line message ID containing the image
+        reply_token: Reply token (may expire)
+    """
+    # Get handler (lazy initialization happens here, not in webhook)
+    handler = get_handler()
+
+    try:
+        print(f"📸 Processing image from {user_id} (message_id: {message_id})")
+
+        # Process image
+        result = await handler.handle_image_message_with_push(user_id, message_id)
+
+        # Send result via push message
+        await handler.push_message(user_id, result)
+
+        print(f"✅ Image processed successfully for {user_id}")
+
+    except Exception as e:
+        print(f"❌ Error processing image: {e}")
         error_msg = f"❌ 發生錯誤：{str(e)}"
         await handler.push_message(user_id, error_msg)
 

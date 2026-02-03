@@ -47,7 +47,9 @@ class NotionRepository:
         author: Optional[str] = None,
         likes: Optional[int] = None,
         comments: Optional[int] = None,
-        shares: Optional[int] = None
+        shares: Optional[int] = None,
+        image_url: Optional[str] = None,
+        image_description: Optional[str] = None
     ) -> SaveResult:
         """
         Save content to Notion database.
@@ -115,6 +117,18 @@ class NotionRepository:
             if shares is not None:
                 properties["Shares"] = {
                     "number": shares
+                }
+
+            # Add image properties if provided
+            if image_url:
+                properties["Image URL"] = {
+                    "url": image_url
+                }
+            if image_description:
+                # Truncate if too long
+                desc = image_description[:2000] if len(image_description) > 2000 else image_description
+                properties["Image Description"] = {
+                    "rich_text": [{"text": {"content": desc}}]
                 }
 
             # Create page in database

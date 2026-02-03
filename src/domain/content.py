@@ -23,6 +23,7 @@ class ContentType(Enum):
     TEXT = "text"
     URL = "url"
     SOCIAL = "social"
+    IMAGE = "image"
 
 
 @dataclass
@@ -58,6 +59,8 @@ class Content:
     likes: Optional[int] = None
     comments: Optional[int] = None
     shares: Optional[int] = None
+    image_url: Optional[str] = None
+    image_description: Optional[str] = None
 
     def is_url(self) -> bool:
         """Check if content is a URL type."""
@@ -70,6 +73,10 @@ class Content:
     def has_summary(self) -> bool:
         """Check if content has been summarized."""
         return self.summary is not None
+
+    def is_image(self) -> bool:
+        """Check if content is an IMAGE type."""
+        return self.content_type == ContentType.IMAGE
 
 
 def create_text_content(text: str) -> Content:
@@ -96,4 +103,33 @@ def create_social_content(url: str, platform: SocialPlatform) -> Content:
         raw_content=url,
         source_url=url,
         social_platform=platform
+    )
+
+
+def create_image_content(
+    image_url: str,
+    image_description: Optional[str] = None,
+    title: Optional[str] = None,
+    tags: Optional[List[str]] = None
+) -> Content:
+    """
+    Factory function to create an IMAGE type content.
+
+    Args:
+        image_url: URL of the uploaded image (e.g., Google Drive link)
+        image_description: AI-generated description of the image
+        title: AI-generated title for the image
+        tags: AI-generated tags
+
+    Returns:
+        Content entity with IMAGE type
+    """
+    return Content(
+        content_type=ContentType.IMAGE,
+        raw_content="[Image]",
+        image_url=image_url,
+        image_description=image_description,
+        title=title,
+        summary=image_description,
+        tags=tags or []
     )

@@ -30,3 +30,7 @@ ngrok.yml
 # ngrok binary
 ngrok
 ngrok-*.tgz
+
+# Google OAuth credentials (sensitive)
+credentials.json
+token.json
