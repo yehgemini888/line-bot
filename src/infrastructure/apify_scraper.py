@@ -6,6 +6,7 @@ Uses Apify actors to scrape content from Facebook and Threads.
 
 import os
 import asyncio
+import httpx
 from typing import Optional
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
@@ -84,6 +85,39 @@ class ApifyScraper:
                 error_message=str(e)
             )
 
+    async def _resolve_facebook_share_url(self, url: str) -> str:
+        """
+        Resolve Facebook share URLs (e.g., /share/p/, /share/r/) to their canonical form.
+        
+        Apify actors often struggle with the short share links, but work fine with
+        the final redirected URLs.
+        """
+        if "/share/" not in url and "fb.watch" not in url:
+            return url
+
+        print(f"🔄 [Apify] Resolving redirect for share URL: {url}")
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                response = await client.head(url, timeout=10.0)
+                # If HEAD fails (some servers block it), try GET with stream to avoid downloading body
+                if response.status_code >= 400:
+                    response = await client.get(url, timeout=10.0)
+                
+                final_url = str(response.url)
+                # Remove query parameters from resolved URL to clean it up
+                # (except 'v' for watch links if needed, but usually FB URLs are cleaner without params)
+                if "?" in final_url and "facebook.com" in final_url:
+                    base_url = final_url.split("?")[0]
+                    # Only strip params if it looks like a standard post/video URL
+                    if "/posts/" in base_url or "/videos/" in base_url or "/reel/" in base_url:
+                        final_url = base_url
+                
+                print(f"✅ [Apify] Resolved URL: {final_url}")
+                return final_url
+        except Exception as e:
+            print(f"⚠️ [Apify] Failed to resolve URL redirect: {e}")
+            return url
+
     async def _scrape_facebook(self, url: str) -> SocialScrapeResult:
         """
         Scrape Facebook post using apify/facebook-posts-scraper.
@@ -94,6 +128,9 @@ class ApifyScraper:
         - likes/reactions: Engagement count
         - comments: Comment count
         """
+        # Resolve redirect first (e.g. /share/r/ -> /reel/123)
+        url = await self._resolve_facebook_share_url(url)
+        
         actor_id = self.ACTORS[SocialPlatform.FACEBOOK]
 
         # Input for facebook-posts-scraper
