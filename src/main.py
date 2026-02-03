@@ -173,11 +173,30 @@ def restore_google_credentials():
     creds_b64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
     if creds_b64:
         creds_path = "/tmp/credentials.json"
-        with open(creds_path, "w") as f:
-            f.write(base64.b64decode(creds_b64).decode("utf-8"))
-        GOOGLE_SERVICE_ACCOUNT_FILE = creds_path
-        os.environ["GOOGLE_SERVICE_ACCOUNT_FILE"] = creds_path
-        print(f"☁️ Google credentials restored to {creds_path}")
+        try:
+            # Decode Base64
+            json_str = base64.b64decode(creds_b64).decode("utf-8")
+            
+            # Parse JSON to sanitize private_key
+            import json
+            creds_data = json.loads(json_str)
+            
+            # Fix private_key newlines if they are escaped (e.g. "\\n" -> "\n")
+            if "private_key" in creds_data:
+                private_key = creds_data["private_key"]
+                if "\\n" in private_key:
+                    creds_data["private_key"] = private_key.replace("\\n", "\n")
+            
+            # Write sanitized JSON to file
+            with open(creds_path, "w") as f:
+                json.dump(creds_data, f, indent=2)
+                
+            GOOGLE_SERVICE_ACCOUNT_FILE = creds_path
+            os.environ["GOOGLE_SERVICE_ACCOUNT_FILE"] = creds_path
+            print(f"☁️ Google credentials restored and sanitized at {creds_path}")
+            
+        except Exception as e:
+            print(f"❌ Failed to restore Google credentials: {e}")
 
 
 @asynccontextmanager
