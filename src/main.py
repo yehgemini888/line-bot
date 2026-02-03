@@ -99,20 +99,24 @@ def get_process_image_usecase() -> ProcessImageUseCase:
     """Get or create the process image use case."""
     global _process_image_usecase, _image_enabled
     if _process_image_usecase is None and _image_enabled:
-        ai_service = get_ai_service()
-        drive_service = GoogleDriveService(
-            credentials_file=GOOGLE_SERVICE_ACCOUNT_FILE,
-            folder_id=GOOGLE_DRIVE_FOLDER_ID
-        )
-        notion_repo = NotionRepository(
-            api_key=NOTION_API_KEY,
-            database_id=NOTION_DATABASE_ID
-        )
-        _process_image_usecase = ProcessImageUseCase(
-            image_analyzer=ai_service,
-            image_uploader=drive_service,
-            repository=notion_repo
-        )
+        try:
+            ai_service = get_ai_service()
+            drive_service = GoogleDriveService(
+                credentials_file=GOOGLE_SERVICE_ACCOUNT_FILE,
+                folder_id=GOOGLE_DRIVE_FOLDER_ID
+            )
+            notion_repo = NotionRepository(
+                api_key=NOTION_API_KEY,
+                database_id=NOTION_DATABASE_ID
+            )
+            _process_image_usecase = ProcessImageUseCase(
+                image_analyzer=ai_service,
+                image_uploader=drive_service,
+                repository=notion_repo
+            )
+        except Exception as e:
+            print(f"⚠️ Image processing init failed, disabling: {e}")
+            _image_enabled = False
     return _process_image_usecase
 
 

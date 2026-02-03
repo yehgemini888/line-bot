@@ -1,14 +1,17 @@
 """
 Infrastructure Layer: Google Drive Service
 
-Handles uploading images to Google Drive using OAuth 2.0.
+Handles uploading images to Google Drive.
+Supports both Service Account (cloud) and OAuth 2.0 (local dev).
 """
 
 import os
 import io
+import json
 from typing import Optional
 from dataclasses import dataclass
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -50,8 +53,32 @@ class GoogleDriveService:
         self.service = None
         self._initialize_service()
 
+    def _is_service_account(self) -> bool:
+        """Check if the credentials file is a service account key."""
+        try:
+            with open(self.credentials_file, 'r') as f:
+                data = json.load(f)
+            return data.get('type') == 'service_account'
+        except Exception:
+            return False
+
     def _initialize_service(self):
-        """Initialize the Drive service with OAuth credentials."""
+        """Initialize the Drive service. Auto-detects credential type."""
+        if self._is_service_account():
+            self._init_with_service_account()
+        else:
+            self._init_with_oauth()
+
+    def _init_with_service_account(self):
+        """Initialize using Service Account credentials (for cloud deployment)."""
+        creds = service_account.Credentials.from_service_account_file(
+            self.credentials_file, scopes=self.SCOPES
+        )
+        self.service = build('drive', 'v3', credentials=creds)
+        print("✅ [Drive] Service initialized with Service Account")
+
+    def _init_with_oauth(self):
+        """Initialize using OAuth 2.0 credentials (for local development)."""
         creds = None
 
         # Load existing token if available
