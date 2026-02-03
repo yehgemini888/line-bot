@@ -1,0 +1,300 @@
+"""
+Infrastructure Layer: OpenAI Service
+
+Handles AI summarization and image analysis using OpenAI GPT models.
+"""
+
+import base64
+from openai import AsyncOpenAI
+from typing import List, Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class SummaryResult:
+    """Result of AI summarization."""
+    title: str
+    summary: str
+    tags: List[str]
+    success: bool
+    error_message: Optional[str] = None
+
+
+@dataclass
+class ImageAnalysisResult:
+    """Result of image analysis."""
+    title: str
+    description: str
+    tags: List[str]
+    success: bool
+    error_message: Optional[str] = None
+
+
+class OpenAIService:
+    """
+    AI service for content summarization and image analysis using OpenAI.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        text_model: str = "gpt-4o-mini",
+        vision_model: str = "gpt-4o-mini"
+    ):
+        """
+        Initialize OpenAI service.
+
+        Args:
+            api_key: OpenAI API key
+            text_model: Model for text summarization (default: gpt-4o-mini)
+            vision_model: Model for image analysis (default: gpt-4o)
+        """
+        self.client = AsyncOpenAI(api_key=api_key)
+        self.text_model = text_model
+        self.vision_model = vision_model
+
+    async def summarize(self, content: str, content_type: str = "text") -> SummaryResult:
+        """
+        Summarize content using OpenAI.
+
+        Args:
+            content: The text content to summarize
+            content_type: Type of content ("text" or "url")
+
+        Returns:
+            SummaryResult with title, summary, and tags
+        """
+        try:
+            prompt = self._build_prompt(content, content_type)
+
+            response = await self.client.chat.completions.create(
+                model=self.text_model,
+                messages=[
+                    {"role": "system", "content": "你是一個專業的內容摘要助手，請用繁體中文回覆。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=1000
+            )
+
+            result_text = response.choices[0].message.content
+            parsed = self._parse_response(result_text)
+
+            return SummaryResult(
+                title=parsed["title"],
+                summary=parsed["summary"],
+                tags=parsed["tags"],
+                success=True
+            )
+
+        except Exception as e:
+            print(f"❌ [OpenAI] Summarization failed: {e}")
+            return SummaryResult(
+                title="Error",
+                summary="",
+                tags=[],
+                success=False,
+                error_message=str(e)
+            )
+
+    async def analyze_image(
+        self,
+        image_data: bytes,
+        mime_type: str = "image/jpeg"
+    ) -> ImageAnalysisResult:
+        """
+        Analyze an image using OpenAI Vision.
+
+        Args:
+            image_data: Image binary data
+            mime_type: MIME type of the image
+
+        Returns:
+            ImageAnalysisResult with title, description, and tags
+        """
+        try:
+            # Encode image to base64
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+
+            prompt = self._build_image_prompt()
+
+            response = await self.client.chat.completions.create(
+                model=self.vision_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime_type};base64,{image_base64}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=1000
+            )
+
+            result_text = response.choices[0].message.content
+            parsed = self._parse_image_response(result_text)
+
+            print(f"🔍 [OpenAI Vision] Analysis complete: {parsed['title']}")
+
+            return ImageAnalysisResult(
+                title=parsed["title"],
+                description=parsed["description"],
+                tags=parsed["tags"],
+                success=True
+            )
+
+        except Exception as e:
+            print(f"❌ [OpenAI Vision] Analysis failed: {e}")
+            return ImageAnalysisResult(
+                title="Error",
+                description="",
+                tags=[],
+                success=False,
+                error_message=str(e)
+            )
+
+    def _build_prompt(self, content: str, content_type: str) -> str:
+        """Build the summarization prompt."""
+        max_length = 10000
+        if len(content) > max_length:
+            content = content[:max_length] + "...(truncated)"
+
+        source_desc = "網頁內容" if content_type == "url" else "文字內容"
+
+        return f"""請分析以下{source_desc}，並以繁體中文回覆：
+
+---
+{content}
+---
+
+請嚴格按照以下格式回覆（不要加入其他內容）：
+
+標題：[用一句話概括主題，15字以內]
+
+摘要：[用3-5句話總結重點內容]
+
+標籤：[提供3-5個相關標籤，用逗號分隔]
+"""
+
+    def _build_image_prompt(self) -> str:
+        """Build the image analysis prompt."""
+        return """請分析這張圖片，並以繁體中文回覆。
+
+請嚴格按照以下格式回覆（不要加入其他內容）：
+
+標題：[用一句話描述圖片內容，15字以內]
+
+描述：[用3-5句話詳細描述圖片中的內容、場景、物體、人物、文字等]
+
+標籤：[提供3-5個相關標籤，用逗號分隔，例如：風景、美食、寵物、科技等]
+"""
+
+    def _parse_response(self, response_text: str) -> dict:
+        """Parse OpenAI response into structured data."""
+        result = {
+            "title": "",
+            "summary": "",
+            "tags": []
+        }
+
+        lines = response_text.strip().split("\n")
+        current_field = None
+        current_content = []
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("標題：") or line.startswith("標題:"):
+                if current_field and current_content:
+                    result[current_field] = "\n".join(current_content).strip()
+                current_field = "title"
+                current_content = [line.replace("標題：", "").replace("標題:", "").strip()]
+
+            elif line.startswith("摘要：") or line.startswith("摘要:"):
+                if current_field and current_content:
+                    result[current_field] = "\n".join(current_content).strip()
+                current_field = "summary"
+                current_content = [line.replace("摘要：", "").replace("摘要:", "").strip()]
+
+            elif line.startswith("標籤：") or line.startswith("標籤:"):
+                if current_field and current_content:
+                    result[current_field] = "\n".join(current_content).strip()
+                current_field = "tags_raw"
+                tags_text = line.replace("標籤：", "").replace("標籤:", "").strip()
+                tags = [t.strip() for t in tags_text.replace("，", ",").split(",") if t.strip()]
+                result["tags"] = tags
+                current_field = None
+                current_content = []
+
+            elif current_field:
+                current_content.append(line)
+
+        if current_field and current_content:
+            result[current_field] = "\n".join(current_content).strip()
+
+        if not result["title"]:
+            result["title"] = "未能解析標題"
+        if not result["summary"]:
+            result["summary"] = response_text[:500] if response_text else "未能產生摘要"
+
+        return result
+
+    def _parse_image_response(self, response_text: str) -> dict:
+        """Parse OpenAI image analysis response into structured data."""
+        result = {
+            "title": "",
+            "description": "",
+            "tags": []
+        }
+
+        lines = response_text.strip().split("\n")
+        current_field = None
+        current_content = []
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith("標題：") or line.startswith("標題:"):
+                if current_field and current_content:
+                    result[current_field] = "\n".join(current_content).strip()
+                current_field = "title"
+                current_content = [line.replace("標題：", "").replace("標題:", "").strip()]
+
+            elif line.startswith("描述：") or line.startswith("描述:"):
+                if current_field and current_content:
+                    result[current_field] = "\n".join(current_content).strip()
+                current_field = "description"
+                current_content = [line.replace("描述：", "").replace("描述:", "").strip()]
+
+            elif line.startswith("標籤：") or line.startswith("標籤:"):
+                if current_field and current_content:
+                    result[current_field] = "\n".join(current_content).strip()
+                current_field = "tags_raw"
+                tags_text = line.replace("標籤：", "").replace("標籤:", "").strip()
+                tags = [t.strip() for t in tags_text.replace("，", ",").split(",") if t.strip()]
+                result["tags"] = tags
+                current_field = None
+                current_content = []
+
+            elif current_field:
+                current_content.append(line)
+
+        if current_field and current_content:
+            result[current_field] = "\n".join(current_content).strip()
+
+        if not result["title"]:
+            result["title"] = "圖片分析"
+        if not result["description"]:
+            result["description"] = response_text[:500] if response_text else "未能產生描述"
+
+        return result

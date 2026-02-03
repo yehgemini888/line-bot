@@ -47,6 +47,15 @@
 
 ---
 
+## ✅ Phase 2.5: 多 AI 提供者支援 (COMPLETED)
+- [x] Task 20: OpenAI Service (文字摘要 + 圖片辨識)
+- [x] Task 21: AI Provider 切換機制 (環境變數 AI_PROVIDER)
+- [x] Task 22: Main.py 整合 (動態選擇 AI 服務)
+
+**成果：** 可透過 `AI_PROVIDER` 環境變數切換 Gemini 或 OpenAI
+
+---
+
 ## ⬜ Phase 3: 雲端部署 (PLANNED)
 - [ ] Task 20: Dockerfile 建立
 - [ ] Task 21: Railway / Render 部署設定
@@ -74,6 +83,7 @@
 | 1 | MVP Foundation | ✅ 完成 | 10/10 |
 | 4 | 社群貼文支援 | ✅ 完成 | 6/6 |
 | 2 | 圖片支援 | ✅ 完成 | 9/9 |
+| 2.5 | 多 AI 提供者 | ✅ 完成 | 3/3 |
 | 3 | 雲端部署 | ⬜ 待開始 | 0/5 |
 | 5 | 進階功能 | ⬜ 待開始 | 0/5 |
 
@@ -81,7 +91,7 @@
 
 # 🚀 Current Focus
 
-**Phase 2 已完成！** 可進入下一階段：
+**Phase 2.5 已完成！** 可進入下一階段：
 - Phase 3: 雲端部署 (Railway/Render)
 
 ---
@@ -90,32 +100,28 @@
 
 ```
 Project: Line Bot Content Saver
-Phase: 2 (圖片支援) ✅ COMPLETED
+Phase: 2.5 (多 AI 提供者) ✅ COMPLETED
 Status: All features implemented and tested
 
 Key Changes (2026-02-03):
-- Image support: 支援 Line 圖片訊息與圖片 URL
-- Google Drive: OAuth 2.0 認證，上傳圖片並取得公開連結
-- Gemini Vision: 使用 gemini-2.0-flash 分析圖片內容
-- Notion: 新增 Image URL / Image Description 欄位
+- Multi AI Provider: 支援 Gemini 與 OpenAI 切換
+- OpenAI Service: gpt-4o-mini 用於文字摘要與圖片辨識
+- AI_PROVIDER: 環境變數控制使用哪個 AI
 
 New Files:
-- src/infrastructure/drive_service.py (Google Drive OAuth 上傳)
-- src/infrastructure/image_detector.py (圖片 URL 偵測)
-- src/usecase/process_image.py (圖片處理 UseCase)
-- credentials.json (OAuth 憑證)
-- token.json (OAuth Token)
-- authorize_drive.py (首次授權腳本)
+- src/infrastructure/openai_service.py (OpenAI 文字/圖片服務)
 
 Modified Files:
-- src/domain/content.py (IMAGE type, image_url, image_description)
-- src/infrastructure/gemini_service.py (analyze_image 方法)
-- src/infrastructure/line_handler.py (圖片下載與處理)
-- src/infrastructure/notion_repo.py (圖片欄位儲存)
-- src/main.py (ImageMessageContent 處理)
-- requirements.txt (google-api-python-client, google-auth-oauthlib)
+- src/main.py (AI Provider 動態選擇)
+- requirements.txt (新增 openai>=1.0.0)
+- .env (新增 OPENAI_API_KEY, AI_PROVIDER)
 
 New Environment Variables:
-- GOOGLE_SERVICE_ACCOUNT_FILE (OAuth credentials.json 路徑)
-- GOOGLE_DRIVE_FOLDER_ID (上傳目標資料夾 ID)
+- OPENAI_API_KEY (OpenAI API Key)
+- AI_PROVIDER (gemini 或 openai)
+
+Previous Phases:
+- Phase 1: MVP Foundation ✅
+- Phase 4: 社群貼文支援 ✅
+- Phase 2: 圖片支援 ✅
 ```

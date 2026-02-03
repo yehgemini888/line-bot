@@ -5,7 +5,7 @@
 使用 Gemini AI 進行摘要分析，並儲存至 Notion 資料庫。
 圖片會上傳至 Google Drive 並產生公開連結。
 
-## 2. Current Status: ✅ Phase 2 Completed
+## 2. Current Status: ✅ Phase 2.5 Completed
 
 ### 已完成功能
 - ✅ 文字訊息摘要
@@ -19,6 +19,8 @@
 - ✅ **圖片訊息處理 (Line 圖片 / 圖片 URL)**
 - ✅ **圖片上傳至 Google Drive (OAuth 2.0)**
 - ✅ **Gemini Vision 圖片分析**
+- ✅ **多 AI 提供者支援 (Gemini / OpenAI 可切換)**
+- ✅ **OpenAI GPT-4o-mini 文字摘要與圖片辨識**
 
 ### 待開發功能
 - ⬜ 雲端部署 (Railway / Render)
@@ -32,8 +34,9 @@
 | Language       | Python 3.10+                   | ✅ |
 | Web Framework  | FastAPI                        | ✅ |
 | Line SDK       | line-bot-sdk v3                | ✅ |
-| AI             | google-generativeai (Gemini)   | ✅ |
-| AI Vision      | Gemini 2.0 Flash (Vision)      | ✅ |
+| AI (Gemini)    | google-generativeai (Gemini)   | ✅ |
+| AI (OpenAI)    | openai (GPT-4o-mini)           | ✅ |
+| AI Vision      | Gemini / OpenAI Vision         | ✅ |
 | Notion         | notion-client                  | ✅ |
 | HTTP Client    | httpx                          | ✅ |
 | HTML Parser    | beautifulsoup4                 | ✅ |
@@ -98,6 +101,7 @@ Line bot/
 │   │   ├── __init__.py
 │   │   ├── line_handler.py     # Line Webhook Handler (含圖片處理)
 │   │   ├── gemini_service.py   # Gemini AI Adapter (含 Vision)
+│   │   ├── openai_service.py   # OpenAI Adapter (含 Vision) ✅
 │   │   ├── notion_repo.py      # Notion Repository (含圖片欄位)
 │   │   ├── web_scraper.py      # URL Content Fetcher
 │   │   ├── social_detector.py  # 社群網址偵測 (FB/Threads)
@@ -181,6 +185,8 @@ class Content:
 | LINE_CHANNEL_ACCESS_TOKEN   | Line Channel Access Token      | ✅ |
 | LINE_CHANNEL_SECRET         | Line Channel Secret            | ✅ |
 | GEMINI_API_KEY              | Google Gemini API Key          | ✅ |
+| OPENAI_API_KEY              | OpenAI API Key                 | ✅ |
+| AI_PROVIDER                 | AI 提供者 (gemini/openai)      | ✅ |
 | NOTION_API_KEY              | Notion Integration Token       | ✅ |
 | NOTION_DATABASE_ID          | Notion Database ID             | ✅ |
 | APIFY_API_TOKEN             | Apify API Token (社群爬取)     | ✅ |
@@ -280,3 +286,19 @@ User sends Image to Line Bot
 支援的圖片格式：
 - 副檔名: `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.tiff`, `.svg`
 - 圖床服務: Imgur, Giphy, Unsplash, Pexels, Flickr, Discord CDN, Twitter Media
+
+## 14. AI Provider Configuration (Phase 2.5 ✅)
+透過 `AI_PROVIDER` 環境變數切換 AI 服務：
+
+```bash
+# 使用 Gemini（預設）
+AI_PROVIDER=gemini
+
+# 使用 OpenAI
+AI_PROVIDER=openai
+```
+
+| Provider | 文字模型 | 圖片模型 | 特點 |
+|----------|----------|----------|------|
+| Gemini | gemini-2.0-flash | gemini-2.0-flash | 免費額度高 |
+| OpenAI | gpt-4o-mini | gpt-4o-mini | 穩定、便宜 |

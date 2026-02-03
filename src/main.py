@@ -19,6 +19,7 @@ load_dotenv()
 # Infrastructure imports
 from src.infrastructure.web_scraper import WebScraper
 from src.infrastructure.gemini_service import GeminiService
+from src.infrastructure.openai_service import OpenAIService
 from src.infrastructure.notion_repo import NotionRepository
 from src.infrastructure.line_handler import LineMessageHandler
 from src.infrastructure.social_detector import SocialDetector
@@ -39,6 +40,8 @@ from src.domain.content import ContentType
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").lower()  # "gemini" or "openai"
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
@@ -51,14 +54,28 @@ def validate_config():
     required = {
         "LINE_CHANNEL_ACCESS_TOKEN": LINE_CHANNEL_ACCESS_TOKEN,
         "LINE_CHANNEL_SECRET": LINE_CHANNEL_SECRET,
-        "GEMINI_API_KEY": GEMINI_API_KEY,
         "NOTION_API_KEY": NOTION_API_KEY,
         "NOTION_DATABASE_ID": NOTION_DATABASE_ID,
         "APIFY_API_TOKEN": APIFY_API_TOKEN,
     }
+
+    # Validate AI provider configuration
+    if AI_PROVIDER == "openai":
+        required["OPENAI_API_KEY"] = OPENAI_API_KEY
+    else:
+        required["GEMINI_API_KEY"] = GEMINI_API_KEY
+
     missing = [k for k, v in required.items() if not v]
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+
+def get_ai_service():
+    """Get AI service based on AI_PROVIDER setting."""
+    if AI_PROVIDER == "openai":
+        return OpenAIService(api_key=OPENAI_API_KEY)
+    else:
+        return GeminiService(api_key=GEMINI_API_KEY)
 
 
 # Initialize components (lazy loading)
@@ -72,7 +89,7 @@ def get_process_image_usecase() -> ProcessImageUseCase:
     """Get or create the process image use case."""
     global _process_image_usecase, _image_enabled
     if _process_image_usecase is None and _image_enabled:
-        gemini_service = GeminiService(api_key=GEMINI_API_KEY)
+        ai_service = get_ai_service()
         drive_service = GoogleDriveService(
             credentials_file=GOOGLE_SERVICE_ACCOUNT_FILE,
             folder_id=GOOGLE_DRIVE_FOLDER_ID
@@ -82,7 +99,7 @@ def get_process_image_usecase() -> ProcessImageUseCase:
             database_id=NOTION_DATABASE_ID
         )
         _process_image_usecase = ProcessImageUseCase(
-            image_analyzer=gemini_service,
+            image_analyzer=ai_service,
             image_uploader=drive_service,
             repository=notion_repo
         )
@@ -98,7 +115,7 @@ def get_handler() -> LineMessageHandler:
         social_detector = SocialDetector()
         image_detector = ImageDetector()
         apify_scraper = ApifyScraper(api_token=APIFY_API_TOKEN)
-        gemini_service = GeminiService(api_key=GEMINI_API_KEY)
+        ai_service = get_ai_service()
         notion_repo = NotionRepository(
             api_key=NOTION_API_KEY,
             database_id=NOTION_DATABASE_ID
@@ -106,7 +123,7 @@ def get_handler() -> LineMessageHandler:
 
         # UseCases
         summarize_usecase = SummarizeUseCase(
-            ai_service=gemini_service,
+            ai_service=ai_service,
             web_scraper=web_scraper,
             social_scraper=apify_scraper
         )
@@ -141,6 +158,7 @@ async def lifespan(app: FastAPI):
     validate_config()
     print("🚀 Line Bot Content Saver started!")
     print(f"📦 Notion Database ID: {NOTION_DATABASE_ID[:8]}...")
+    print(f"🤖 AI Provider: {AI_PROVIDER.upper()}")
 
     # Check if image processing is configured
     if GOOGLE_SERVICE_ACCOUNT_FILE and GOOGLE_DRIVE_FOLDER_ID:
