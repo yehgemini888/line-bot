@@ -103,10 +103,14 @@ def get_process_image_usecase() -> ProcessImageUseCase:
             # Ensure we use the latest credentials file path (it might have been updated in lifespan)
             current_credentials_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
             
+            # Check for restored token file
+            token_file = "/tmp/token.json" if os.path.exists("/tmp/token.json") else None
+            
             ai_service = get_ai_service()
             drive_service = GoogleDriveService(
                 credentials_file=current_credentials_file,
-                folder_id=GOOGLE_DRIVE_FOLDER_ID
+                folder_id=GOOGLE_DRIVE_FOLDER_ID,
+                token_file=token_file
             )
             notion_repo = NotionRepository(
                 api_key=NOTION_API_KEY,
@@ -167,6 +171,18 @@ def get_parser() -> WebhookParser:
     return _parser
 
 
+def restore_google_token():
+    """Restore token.json from Base64 environment variable (for cloud deployment with OAuth)."""
+    token_b64 = os.getenv("GOOGLE_TOKEN_BASE64")
+    if token_b64:
+        token_path = "/tmp/token.json"
+        try:
+            with open(token_path, "w") as f:
+                f.write(base64.b64decode(token_b64).decode("utf-8"))
+            print(f"☁️ Google token restored to {token_path}")
+        except Exception as e:
+            print(f"❌ Failed to restore Google token: {e}")
+
 def restore_google_credentials():
     """Restore credentials.json from Base64 environment variable (for cloud deployment)."""
     global GOOGLE_SERVICE_ACCOUNT_FILE
@@ -205,6 +221,7 @@ async def lifespan(app: FastAPI):
     global _image_enabled
     # Startup
     restore_google_credentials()
+    restore_google_token()
     validate_config()
     print("🚀 Line Bot Content Saver started!")
     print(f"📦 Notion Database ID: {NOTION_DATABASE_ID[:8]}...")
