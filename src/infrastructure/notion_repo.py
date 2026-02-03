@@ -35,6 +35,17 @@ class NotionRepository:
         self.client = AsyncClient(auth=api_key)
         self.database_id = database_id
 
+    def _split_text(self, text: str, max_length: int = 2000) -> List[dict]:
+        """Split text into chunks of max_length for Notion's rich_text property."""
+        if not text:
+            return []
+        
+        # Ensure we don't exceed 2000 chars (Notion API limit)
+        return [
+            {"text": {"content": text[i : i + max_length]}}
+            for i in range(0, len(text), max_length)
+        ]
+
     async def save(
         self,
         title: str,
@@ -57,7 +68,7 @@ class NotionRepository:
         Args:
             title: Content title
             summary: AI-generated summary
-            content: Original content (truncated if needed)
+            content: Original content
             content_type: "text" or "url"
             tags: List of tags
             source_url: Source URL if applicable
@@ -67,27 +78,22 @@ class NotionRepository:
             SaveResult with page ID and URL
         """
         try:
-            # Truncate content if too long (Notion has limits)
-            max_content_length = 2000
-            if len(content) > max_content_length:
-                content = content[:max_content_length] + "...(truncated)"
-
             # Build properties
             properties = {
                 "Title": {
-                    "title": [{"text": {"content": title}}]
+                    "title": [{"text": {"content": title[:2000]}}] # Title also has 2000 limit
                 },
                 "Summary": {
-                    "rich_text": [{"text": {"content": summary}}]
+                    "rich_text": self._split_text(summary)
                 },
                 "Content": {
-                    "rich_text": [{"text": {"content": content}}]
+                    "rich_text": self._split_text(content)
                 },
                 "Type": {
                     "select": {"name": content_type}
                 },
                 "Tags": {
-                    "multi_select": [{"name": tag} for tag in tags[:5]]  # Limit to 5 tags
+                    "multi_select": [{"name": tag[:100]} for tag in tags[:10]]  # Notion tag limit (100 chars, limit count)
                 },
                 "Created": {
                     "date": {"start": (created_at or datetime.now()).isoformat()}
@@ -101,10 +107,9 @@ class NotionRepository:
                 }
 
             # Add social media metadata if provided
-            print(f"🐛 [Notion] Saving metadata - Author: {author}, Likes: {likes}, Comments: {comments}, Shares: {shares}")
             if author:
                 properties["Author"] = {
-                    "rich_text": [{"text": {"content": author}}]
+                    "rich_text": self._split_text(author)
                 }
             if likes is not None:
                 properties["Likes"] = {
@@ -125,10 +130,8 @@ class NotionRepository:
                     "url": image_url
                 }
             if image_description:
-                # Truncate if too long
-                desc = image_description[:2000] if len(image_description) > 2000 else image_description
                 properties["Image Description"] = {
-                    "rich_text": [{"text": {"content": desc}}]
+                    "rich_text": self._split_text(image_description)
                 }
 
             # Create page in database
