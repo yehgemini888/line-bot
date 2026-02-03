@@ -100,9 +100,12 @@ def get_process_image_usecase() -> ProcessImageUseCase:
     global _process_image_usecase, _image_enabled
     if _process_image_usecase is None and _image_enabled:
         try:
+            # Ensure we use the latest credentials file path (it might have been updated in lifespan)
+            current_credentials_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+            
             ai_service = get_ai_service()
             drive_service = GoogleDriveService(
-                credentials_file=GOOGLE_SERVICE_ACCOUNT_FILE,
+                credentials_file=current_credentials_file,
                 folder_id=GOOGLE_DRIVE_FOLDER_ID
             )
             notion_repo = NotionRepository(
