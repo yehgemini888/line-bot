@@ -84,42 +84,94 @@ class YouTubeService:
             loop = asyncio.get_running_loop()
             info = await loop.run_in_executor(_executor, self._fetch_video_info, url)
             
-            if not info:
-                return None
+            if info:
+                # yt-dlp succeeded - get captions too
+                captions = await loop.run_in_executor(
+                    _executor, 
+                    self._fetch_captions, 
+                    url, 
+                    info.get('subtitles', {}),
+                    info.get('automatic_captions', {})
+                )
 
-            # Try to get captions
-            captions = await loop.run_in_executor(
-                _executor, 
-                self._fetch_captions, 
-                url, 
-                info.get('subtitles', {}),
-                info.get('automatic_captions', {})
-            )
+                # Format duration
+                duration_seconds = info.get('duration', 0) or 0
+                duration_str = self._format_duration(duration_seconds)
 
-            # Format duration
-            duration_seconds = info.get('duration', 0) or 0
-            duration_str = self._format_duration(duration_seconds)
+                video_info = YouTubeVideoInfo(
+                    video_id=video_id,
+                    title=info.get('title', 'Unknown Title'),
+                    description=info.get('description', '') or '',
+                    channel_name=info.get('uploader', info.get('channel', 'Unknown Channel')),
+                    duration=duration_str,
+                    duration_seconds=duration_seconds,
+                    thumbnail_url=info.get('thumbnail'),
+                    view_count=info.get('view_count'),
+                    captions=captions,
+                    has_captions=bool(captions)
+                )
 
-            video_info = YouTubeVideoInfo(
-                video_id=video_id,
-                title=info.get('title', 'Unknown Title'),
-                description=info.get('description', '') or '',
-                channel_name=info.get('uploader', info.get('channel', 'Unknown Channel')),
-                duration=duration_str,
-                duration_seconds=duration_seconds,
-                thumbnail_url=info.get('thumbnail'),
-                view_count=info.get('view_count'),
-                captions=captions,
-                has_captions=bool(captions)
-            )
+                print(f"✅ [YouTube] Video info fetched via yt-dlp: {video_info.title[:50]}...")
+                print(f"   Duration: {video_info.duration}, Has Captions: {video_info.has_captions}")
 
-            print(f"✅ [YouTube] Video info fetched: {video_info.title[:50]}...")
-            print(f"   Duration: {video_info.duration}, Has Captions: {video_info.has_captions}")
-
-            return video_info
+                return video_info
+            else:
+                # yt-dlp failed (likely IP blocked) - try oEmbed fallback
+                print(f"⚠️ [YouTube] yt-dlp failed, trying oEmbed fallback...")
+                return await self._fetch_via_oembed(video_id, url)
 
         except Exception as e:
             print(f"❌ [YouTube] Error fetching video info: {e}")
+            # Try oEmbed fallback on any error
+            print(f"⚠️ [YouTube] Trying oEmbed fallback...")
+            return await self._fetch_via_oembed(video_id, url)
+
+    async def _fetch_via_oembed(self, video_id: str, url: str) -> Optional[YouTubeVideoInfo]:
+        """
+        Fallback: Fetch basic video info via oEmbed API.
+        
+        This works when yt-dlp is blocked by YouTube (common on cloud servers).
+        Limited info: title, channel, thumbnail only. No captions.
+        """
+        try:
+            import httpx
+            
+            # Use noembed.com as it's more reliable than YouTube's own oEmbed
+            oembed_url = f"https://noembed.com/embed?url=https://www.youtube.com/watch?v={video_id}"
+            
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(oembed_url)
+                response.raise_for_status()
+                data = response.json()
+            
+            if 'error' in data:
+                print(f"❌ [YouTube] oEmbed error: {data.get('error')}")
+                return None
+            
+            title = data.get('title', 'Unknown Title')
+            channel = data.get('author_name', 'Unknown Channel')
+            thumbnail = data.get('thumbnail_url')
+            
+            video_info = YouTubeVideoInfo(
+                video_id=video_id,
+                title=title,
+                description='',  # oEmbed doesn't provide description
+                channel_name=channel,
+                duration='未知',  # oEmbed doesn't provide duration
+                duration_seconds=0,
+                thumbnail_url=thumbnail,
+                view_count=None,
+                captions=None,
+                has_captions=False
+            )
+            
+            print(f"✅ [YouTube] Video info fetched via oEmbed: {title[:50]}...")
+            print(f"   ⚠️ Note: Limited info (no captions, no duration) due to server restrictions")
+            
+            return video_info
+            
+        except Exception as e:
+            print(f"❌ [YouTube] oEmbed fallback failed: {e}")
             return None
 
     def _fetch_video_info(self, url: str) -> Optional[dict]:
