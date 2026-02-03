@@ -1,16 +1,19 @@
 """
 Infrastructure Layer: YouTube Service
 
-Extracts video information and captions from YouTube videos using yt-dlp.
+Extracts video information and captions from YouTube videos using Apify.
+Uses streamers/youtube-scraper actor for reliable extraction.
 """
 
 import asyncio
 import re
-from typing import Optional, Tuple
+from typing import Optional
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 
-# Thread pool for running sync yt-dlp calls
+from apify_client import ApifyClient
+
+# Thread pool for running sync Apify calls
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
@@ -25,16 +28,17 @@ class YouTubeVideoInfo:
     duration_seconds: int
     thumbnail_url: Optional[str] = None
     view_count: Optional[int] = None
+    likes: Optional[int] = None
     captions: Optional[str] = None  # Extracted captions/subtitles
     has_captions: bool = False
 
 
 class YouTubeService:
     """
-    Extracts video information and captions from YouTube.
+    Extracts video information and captions from YouTube using Apify.
     
-    Uses yt-dlp for reliable video info extraction.
-    Prioritizes Traditional Chinese (zh-TW) captions, falls back to auto-generated.
+    Uses streamers/youtube-scraper actor for reliable extraction.
+    Handles IP blocking issues by leveraging Apify's proxy infrastructure.
     """
 
     # YouTube URL patterns
@@ -45,8 +49,23 @@ class YouTubeService:
         re.compile(r'(?:https?://)?(?:www\.)?youtube\.com/embed/([a-zA-Z0-9_-]{11})'),
     ]
 
-    # Caption language priority (Traditional Chinese first)
-    CAPTION_LANGS = ['zh-TW', 'zh-Hant', 'zh', 'zh-Hans', 'en', 'en-US']
+    # Apify actor for YouTube scraping
+    YOUTUBE_ACTOR = "streamers/youtube-scraper"
+
+    def __init__(self, api_token: Optional[str] = None):
+        """
+        Initialize YouTube service with Apify.
+        
+        Args:
+            api_token: Apify API token (uses APIFY_API_TOKEN env var if not provided)
+        """
+        import os
+        self.api_token = api_token or os.getenv("APIFY_API_TOKEN")
+        if self.api_token:
+            self.client = ApifyClient(self.api_token)
+        else:
+            self.client = None
+            print("⚠️ [YouTube] APIFY_API_TOKEN not set, YouTube scraping disabled")
 
     @classmethod
     def extract_video_id(cls, url: str) -> Optional[str]:
@@ -64,7 +83,7 @@ class YouTubeService:
 
     async def get_video_info(self, url: str) -> Optional[YouTubeVideoInfo]:
         """
-        Get video information and captions from YouTube.
+        Get video information and captions from YouTube via Apify.
         
         Args:
             url: YouTube video URL
@@ -77,242 +96,180 @@ class YouTubeService:
             print(f"⚠️ [YouTube] Invalid YouTube URL: {url}")
             return None
 
-        print(f"🎬 [YouTube] Fetching video info for: {video_id}")
+        if not self.client:
+            print(f"❌ [YouTube] Apify client not initialized")
+            return None
+
+        print(f"🎬 [YouTube] Fetching video info via Apify for: {video_id}")
 
         try:
-            # Run yt-dlp in thread pool to avoid blocking
+            # Run in thread pool to avoid blocking
             loop = asyncio.get_running_loop()
-            info = await loop.run_in_executor(_executor, self._fetch_video_info, url)
+            result = await loop.run_in_executor(
+                _executor, 
+                self._run_apify_actor, 
+                url
+            )
             
-            if info:
-                # yt-dlp succeeded - get captions too
-                captions = await loop.run_in_executor(
-                    _executor, 
-                    self._fetch_captions, 
-                    url, 
-                    info.get('subtitles', {}),
-                    info.get('automatic_captions', {})
-                )
+            if not result:
+                print(f"❌ [YouTube] Apify actor returned no results")
+                return None
 
-                # Format duration
-                duration_seconds = info.get('duration', 0) or 0
-                duration_str = self._format_duration(duration_seconds)
-
-                video_info = YouTubeVideoInfo(
-                    video_id=video_id,
-                    title=info.get('title', 'Unknown Title'),
-                    description=info.get('description', '') or '',
-                    channel_name=info.get('uploader', info.get('channel', 'Unknown Channel')),
-                    duration=duration_str,
-                    duration_seconds=duration_seconds,
-                    thumbnail_url=info.get('thumbnail'),
-                    view_count=info.get('view_count'),
-                    captions=captions,
-                    has_captions=bool(captions)
-                )
-
-                print(f"✅ [YouTube] Video info fetched via yt-dlp: {video_info.title[:50]}...")
+            # Parse the result
+            video_info = self._parse_apify_result(result, video_id)
+            
+            if video_info:
+                print(f"✅ [YouTube] Video info fetched: {video_info.title[:50]}...")
                 print(f"   Duration: {video_info.duration}, Has Captions: {video_info.has_captions}")
-
-                return video_info
-            else:
-                # yt-dlp failed (likely IP blocked) - try oEmbed fallback
-                print(f"⚠️ [YouTube] yt-dlp failed, trying oEmbed fallback...")
-                return await self._fetch_via_oembed(video_id, url)
+            
+            return video_info
 
         except Exception as e:
             print(f"❌ [YouTube] Error fetching video info: {e}")
-            # Try oEmbed fallback on any error
-            print(f"⚠️ [YouTube] Trying oEmbed fallback...")
-            return await self._fetch_via_oembed(video_id, url)
-
-    async def _fetch_via_oembed(self, video_id: str, url: str) -> Optional[YouTubeVideoInfo]:
-        """
-        Fallback: Fetch basic video info via oEmbed API.
-        
-        This works when yt-dlp is blocked by YouTube (common on cloud servers).
-        Limited info: title, channel, thumbnail only. No captions.
-        """
-        try:
-            import httpx
-            
-            # Use noembed.com as it's more reliable than YouTube's own oEmbed
-            oembed_url = f"https://noembed.com/embed?url=https://www.youtube.com/watch?v={video_id}"
-            
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(oembed_url)
-                response.raise_for_status()
-                data = response.json()
-            
-            if 'error' in data:
-                print(f"❌ [YouTube] oEmbed error: {data.get('error')}")
-                return None
-            
-            title = data.get('title', 'Unknown Title')
-            channel = data.get('author_name', 'Unknown Channel')
-            thumbnail = data.get('thumbnail_url')
-            
-            video_info = YouTubeVideoInfo(
-                video_id=video_id,
-                title=title,
-                description='',  # oEmbed doesn't provide description
-                channel_name=channel,
-                duration='未知',  # oEmbed doesn't provide duration
-                duration_seconds=0,
-                thumbnail_url=thumbnail,
-                view_count=None,
-                captions=None,
-                has_captions=False
-            )
-            
-            print(f"✅ [YouTube] Video info fetched via oEmbed: {title[:50]}...")
-            print(f"   ⚠️ Note: Limited info (no captions, no duration) due to server restrictions")
-            
-            return video_info
-            
-        except Exception as e:
-            print(f"❌ [YouTube] oEmbed fallback failed: {e}")
             return None
 
-    def _fetch_video_info(self, url: str) -> Optional[dict]:
-        """Synchronously fetch video info using yt-dlp."""
+    def _run_apify_actor(self, url: str) -> Optional[dict]:
+        """Run Apify YouTube scraper actor synchronously."""
         try:
-            import yt_dlp
+            print(f"🔍 [Apify] Running actor: {self.YOUTUBE_ACTOR}")
             
-            ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'extract_flat': False,
-                'skip_download': True,
-                'writesubtitles': True,
-                'writeautomaticsub': True,
-                'subtitleslangs': self.CAPTION_LANGS,
+            # Input for streamers/youtube-scraper
+            run_input = {
+                "startUrls": [{"url": url}],
+                "maxResults": 1,
+                "downloadSubtitles": True,
+                "subtitlesLanguage": "zh-TW,zh,en",  # Prefer Traditional Chinese
+                "subtitlesFormat": "srt"
             }
             
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                return info
+            # Run the actor
+            run = self.client.actor(self.YOUTUBE_ACTOR).call(run_input=run_input)
+            
+            # Poll for status
+            run_id = run.get("id")
+            print(f"[{self.YOUTUBE_ACTOR} runId:{run_id}] -> Status: {run.get('status')}")
+            
+            # Get results from dataset
+            items = list(self.client.dataset(run["defaultDatasetId"]).iterate_items())
+            
+            if items:
+                print(f"✅ [Apify] Got {len(items)} result(s)")
+                return items[0]
+            else:
+                print(f"⚠️ [Apify] No items in dataset")
+                return None
                 
         except Exception as e:
-            print(f"❌ [YouTube] yt-dlp error: {e}")
+            print(f"❌ [Apify] Actor error: {e}")
             return None
 
-    def _fetch_captions(
-        self, 
-        url: str, 
-        subtitles: dict, 
-        automatic_captions: dict
-    ) -> Optional[str]:
-        """
-        Fetch captions/subtitles for the video.
-        
-        Priority:
-        1. Manual subtitles in zh-TW
-        2. Manual subtitles in zh/en
-        3. Auto-generated subtitles in zh-TW
-        4. Auto-generated subtitles in zh/en
-        """
+    def _parse_apify_result(self, item: dict, video_id: str) -> Optional[YouTubeVideoInfo]:
+        """Parse Apify result to YouTubeVideoInfo."""
         try:
-            import yt_dlp
-
-            # Check for available caption languages
-            available_manual = list(subtitles.keys()) if subtitles else []
-            available_auto = list(automatic_captions.keys()) if automatic_captions else []
+            # Debug output
+            print(f"🐛 [Debug] Apify item keys: {list(item.keys())}")
             
-            print(f"   Manual captions available: {available_manual}")
-            print(f"   Auto captions available: {available_auto[:5]}...")  # Limit log
-
-            # Find best caption language
-            caption_url = None
-            caption_lang = None
+            # Extract basic info
+            title = item.get("title", "Unknown Title")
+            description = item.get("text", "") or item.get("description", "") or ""
+            channel_name = item.get("channelName", "Unknown Channel")
+            thumbnail_url = item.get("thumbnailUrl")
+            view_count = item.get("viewCount")
+            likes = item.get("likes")
             
-            # Try manual subtitles first
-            for lang in self.CAPTION_LANGS:
-                if lang in subtitles:
-                    caption_lang = lang
-                    formats = subtitles[lang]
-                    # Prefer vtt or srv3 format
-                    for fmt in formats:
-                        if fmt.get('ext') in ['vtt', 'srv3', 'ttml']:
-                            caption_url = fmt.get('url')
-                            break
-                    if not caption_url and formats:
-                        caption_url = formats[0].get('url')
-                    if caption_url:
-                        print(f"   Using manual captions: {caption_lang}")
-                        break
-
-            # Fall back to auto-generated
-            if not caption_url:
-                for lang in self.CAPTION_LANGS:
-                    if lang in automatic_captions:
-                        caption_lang = lang
-                        formats = automatic_captions[lang]
-                        for fmt in formats:
-                            if fmt.get('ext') in ['vtt', 'srv3', 'ttml', 'json3']:
-                                caption_url = fmt.get('url')
-                                break
-                        if not caption_url and formats:
-                            caption_url = formats[0].get('url')
-                        if caption_url:
-                            print(f"   Using auto captions: {caption_lang}")
-                            break
-
-            if not caption_url:
-                print(f"⚠️ [YouTube] No suitable captions found")
-                return None
-
-            # Download and parse captions
-            import httpx
-            with httpx.Client(timeout=10.0) as client:
-                response = client.get(caption_url)
-                response.raise_for_status()
-                caption_text = response.text
-
-            # Parse VTT/SRV3 format to plain text
-            cleaned_text = self._parse_captions(caption_text)
+            # Parse duration (format: "00:03:17" -> "3:17" or "1:23:45")
+            duration_str = item.get("duration", "0:00")
+            duration_seconds = self._parse_duration(duration_str)
+            formatted_duration = self._format_duration(duration_seconds)
             
-            print(f"✅ [YouTube] Captions extracted: {len(cleaned_text)} chars")
-            return cleaned_text
-
+            # Extract captions/subtitles
+            captions = None
+            has_captions = False
+            
+            subtitles_data = item.get("subtitles")
+            if subtitles_data and isinstance(subtitles_data, list) and len(subtitles_data) > 0:
+                # Find best subtitle (prefer zh-TW, zh, then en)
+                best_subtitle = self._find_best_subtitle(subtitles_data)
+                if best_subtitle:
+                    srt_content = best_subtitle.get("srt", "")
+                    if srt_content:
+                        captions = self._parse_srt_to_text(srt_content)
+                        has_captions = bool(captions)
+                        print(f"   Found {best_subtitle.get('language')} subtitles: {len(captions)} chars")
+            
+            return YouTubeVideoInfo(
+                video_id=video_id,
+                title=title,
+                description=description,
+                channel_name=channel_name,
+                duration=formatted_duration,
+                duration_seconds=duration_seconds,
+                thumbnail_url=thumbnail_url,
+                view_count=view_count,
+                likes=likes,
+                captions=captions,
+                has_captions=has_captions
+            )
+            
         except Exception as e:
-            print(f"⚠️ [YouTube] Error fetching captions: {e}")
+            print(f"❌ [YouTube] Error parsing result: {e}")
             return None
 
-    def _parse_captions(self, raw_text: str) -> str:
-        """Parse VTT/SRV3 caption format to plain text."""
-        lines = raw_text.split('\n')
+    def _find_best_subtitle(self, subtitles: list) -> Optional[dict]:
+        """Find best subtitle by language preference."""
+        # Language priority: Traditional Chinese > Chinese > English
+        priority = ['zh-TW', 'zh-Hant', 'zh', 'zh-Hans', 'en', 'en-US']
+        
+        # Create lookup by language
+        by_lang = {s.get('language', ''): s for s in subtitles}
+        
+        for lang in priority:
+            if lang in by_lang:
+                return by_lang[lang]
+        
+        # Return first available if no priority match
+        return subtitles[0] if subtitles else None
+
+    def _parse_srt_to_text(self, srt_content: str) -> str:
+        """Parse SRT format subtitles to plain text."""
+        lines = srt_content.split('\n')
         text_lines = []
-        seen_lines = set()  # Deduplicate
+        seen_lines = set()
         
         for line in lines:
             line = line.strip()
             
-            # Skip VTT headers and timestamps
+            # Skip empty lines, numbers, and timestamps
             if not line:
-                continue
-            if line.startswith('WEBVTT'):
-                continue
-            if line.startswith('Kind:') or line.startswith('Language:'):
-                continue
-            if '-->' in line:  # Timestamp line
                 continue
             if re.match(r'^\d+$', line):  # Line number
                 continue
-            if line.startswith('NOTE'):
+            if '-->' in line:  # Timestamp
                 continue
             
-            # Remove HTML tags
-            line = re.sub(r'<[^>]+>', '', line)
-            # Remove VTT position tags
-            line = re.sub(r'align:start position:\d+%', '', line)
-            
+            # Clean up the text
             line = line.strip()
             if line and line not in seen_lines:
                 seen_lines.add(line)
                 text_lines.append(line)
         
         return ' '.join(text_lines)
+
+    def _parse_duration(self, duration_str: str) -> int:
+        """Parse duration string (HH:MM:SS or MM:SS) to seconds."""
+        if not duration_str:
+            return 0
+        
+        try:
+            parts = duration_str.split(':')
+            if len(parts) == 3:  # HH:MM:SS
+                return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            elif len(parts) == 2:  # MM:SS
+                return int(parts[0]) * 60 + int(parts[1])
+            else:
+                return 0
+        except:
+            return 0
 
     def _format_duration(self, seconds: int) -> str:
         """Format duration in seconds to HH:MM:SS or MM:SS."""

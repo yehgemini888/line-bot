@@ -138,7 +138,7 @@ def get_handler() -> LineMessageHandler:
         image_detector = ImageDetector()
         apify_scraper = ApifyScraper(api_token=APIFY_API_TOKEN)
         ai_service = get_ai_service()
-        youtube_service = YouTubeService()
+        youtube_service = YouTubeService(api_token=APIFY_API_TOKEN)
         notion_repo = NotionRepository(
             api_key=NOTION_API_KEY,
             database_id=NOTION_DATABASE_ID
