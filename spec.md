@@ -5,7 +5,7 @@
 使用 Gemini AI 進行摘要分析，並儲存至 Notion 資料庫。
 圖片會上傳至 Google Drive 並產生公開連結。
 
-## 2. Current Status: ✅ Phase 2.5 Completed
+## 2. Current Status: ✅ Phase 3 Completed
 
 ### 已完成功能
 - ✅ 文字訊息摘要
@@ -21,9 +21,13 @@
 - ✅ **Gemini Vision 圖片分析**
 - ✅ **多 AI 提供者支援 (Gemini / OpenAI 可切換)**
 - ✅ **OpenAI GPT-4o-mini 文字摘要與圖片辨識**
+- ✅ **雲端部署 (Zeabur) - 24/7 運行**
+
+### 生產環境
+- 🌐 **URL**: https://line-bot4.zeabur.app
+- 🔗 **Webhook**: https://line-bot4.zeabur.app/webhook
 
 ### 待開發功能
-- ⬜ 雲端部署 (Railway / Render)
 - ⬜ 更多社群平台 (IG/Twitter)
 - ⬜ 多語言摘要支援
 - ⬜ 自訂摘要風格
@@ -44,6 +48,7 @@
 | Cloud Storage  | Google Drive API (OAuth 2.0)   | ✅ |
 | Dev Server     | uvicorn                        | ✅ |
 | Tunnel         | ngrok / VS Code Port Forward   | ✅ |
+| Deployment     | Zeabur                         | ✅ |
 
 ## 4. Architecture (Clean Architecture)
 ```

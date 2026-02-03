@@ -87,11 +87,20 @@ class ApifyScraper:
 
     async def _resolve_facebook_share_url(self, url: str) -> str:
         """
-        Resolve Facebook share URLs (e.g., /share/p/, /share/r/) to their canonical form.
+        Resolve Facebook share URLs (e.g., /share/p/, /share/r/, /share/v/) to their canonical form.
         
-        Apify actors often struggle with the short share links, but work fine with
-        the final redirected URLs.
+        Handles cases where share URLs redirect to login pages by extracting
+        story_fbid from the login URL and constructing a canonical URL.
+        
+        Share URL types:
+        - /share/v/ = Video
+        - /share/r/ = Reel
+        - /share/p/ = Post
+        - fb.watch = Short video link
         """
+        import re
+        from urllib.parse import urlparse, parse_qs, unquote
+        
         if "/share/" not in url and "fb.watch" not in url:
             return url
 
@@ -104,12 +113,23 @@ class ApifyScraper:
                     response = await client.get(url, timeout=10.0)
                 
                 final_url = str(response.url)
+                
+                # Check if redirected to login page - this is the key fix!
+                if "/login/" in final_url or "login.php" in final_url:
+                    print(f"⚠️ [Apify] Redirect led to login page, extracting story_fbid...")
+                    canonical_url = self._extract_canonical_url_from_login(final_url, url)
+                    if canonical_url:
+                        print(f"✅ [Apify] Constructed canonical URL: {canonical_url}")
+                        return canonical_url
+                    else:
+                        print(f"❌ [Apify] Could not extract story_fbid from login URL")
+                        return url  # Fallback to original
+                
                 # Remove query parameters from resolved URL to clean it up
-                # (except 'v' for watch links if needed, but usually FB URLs are cleaner without params)
                 if "?" in final_url and "facebook.com" in final_url:
                     base_url = final_url.split("?")[0]
                     # Only strip params if it looks like a standard post/video URL
-                    if "/posts/" in base_url or "/videos/" in base_url or "/reel/" in base_url:
+                    if any(p in base_url for p in ["/posts/", "/videos/", "/reel/", "/watch"]):
                         final_url = base_url
                 
                 print(f"✅ [Apify] Resolved URL: {final_url}")
@@ -117,6 +137,78 @@ class ApifyScraper:
         except Exception as e:
             print(f"⚠️ [Apify] Failed to resolve URL redirect: {e}")
             return url
+
+    def _extract_canonical_url_from_login(self, login_url: str, original_url: str) -> Optional[str]:
+        """
+        Extract canonical Facebook URL from login redirect.
+        
+        Login URL format:
+        https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Fstory.php%3Fstory_fbid%3D1234567890%26id%3D100063776381953...
+        
+        Returns canonical URL based on content type:
+        - Video (/share/v/): https://www.facebook.com/watch?v={story_fbid}
+        - Reel (/share/r/): https://www.facebook.com/reel/{story_fbid}
+        - Post (/share/p/): https://www.facebook.com/{story_fbid}
+        """
+        import re
+        from urllib.parse import urlparse, parse_qs, unquote
+        
+        try:
+            # Parse the login URL
+            parsed = urlparse(login_url)
+            params = parse_qs(parsed.query)
+            
+            # Get the 'next' parameter (URL-encoded target URL)
+            next_url = params.get('next', [None])[0]
+            if not next_url:
+                return None
+            
+            # Decode the next URL (may need multiple decodes)
+            next_url = unquote(next_url)
+            next_url = unquote(next_url)  # Double decode for safety
+            
+            print(f"🔍 [Apify] Decoded next URL: {next_url[:100]}...")
+            
+            # Extract story_fbid from the next URL
+            story_fbid = None
+            
+            # Try story_fbid parameter
+            story_fbid_match = re.search(r'story_fbid[=:](\d+)', next_url)
+            if story_fbid_match:
+                story_fbid = story_fbid_match.group(1)
+            
+            # Try fbid parameter
+            if not story_fbid:
+                fbid_match = re.search(r'[?&]fbid[=:](\d+)', next_url)
+                if fbid_match:
+                    story_fbid = fbid_match.group(1)
+            
+            # Try v parameter (for videos)
+            if not story_fbid:
+                v_match = re.search(r'[?&]v[=:](\d+)', next_url)
+                if v_match:
+                    story_fbid = v_match.group(1)
+            
+            if not story_fbid:
+                print(f"⚠️ [Apify] No story_fbid found in: {next_url[:200]}")
+                return None
+            
+            print(f"✅ [Apify] Extracted story_fbid: {story_fbid}")
+            
+            # Determine URL format based on original share URL type
+            if "/share/v/" in original_url:
+                # Video - use watch format
+                return f"https://www.facebook.com/watch?v={story_fbid}"
+            elif "/share/r/" in original_url:
+                # Reel - use reel format
+                return f"https://www.facebook.com/reel/{story_fbid}"
+            else:
+                # Default post format
+                return f"https://www.facebook.com/{story_fbid}"
+                
+        except Exception as e:
+            print(f"⚠️ [Apify] Error extracting canonical URL: {e}")
+            return None
 
     async def _scrape_facebook(self, url: str) -> SocialScrapeResult:
         """

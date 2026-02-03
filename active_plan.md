@@ -56,14 +56,14 @@
 
 ---
 
-## ⬜ Phase 3: 雲端部署 (PLANNED)
-- [ ] Task 20: Dockerfile 建立
-- [ ] Task 21: Railway / Render 部署設定
-- [ ] Task 22: 環境變數設定
-- [ ] Task 23: 部署與測試
-- [ ] Task 24: 設定固定 Webhook URL
+## ✅ Phase 3: 雲端部署 (COMPLETED)
+- [x] Task 20: ~~Dockerfile 建立~~ (Zeabur 自動偵測 Python，不需要)
+- [x] Task 21: Zeabur 部署設定 (main.py + Procfile)
+- [x] Task 22: 環境變數設定 (含 GOOGLE_CREDENTIALS_BASE64 / GOOGLE_TOKEN_BASE64)
+- [x] Task 23: 部署與測試 ✅ https://line-bot4.zeabur.app
+- [x] Task 24: 設定固定 Webhook URL
 
-**預期成果：** Bot 24/7 運行，不需要每次手動啟動 ngrok
+**成果：** Bot 24/7 運行於 Zeabur，固定網址 `line-bot4.zeabur.app`
 
 ---
 
@@ -84,15 +84,19 @@
 | 4 | 社群貼文支援 | ✅ 完成 | 6/6 |
 | 2 | 圖片支援 | ✅ 完成 | 9/9 |
 | 2.5 | 多 AI 提供者 | ✅ 完成 | 3/3 |
-| 3 | 雲端部署 | ⬜ 待開始 | 0/5 |
+| 3 | 雲端部署 (Zeabur) | ✅ 完成 | 5/5 |
 | 5 | 進階功能 | ⬜ 待開始 | 0/5 |
 
 ---
 
 # 🚀 Current Focus
 
-**Phase 2.5 已完成！** 可進入下一階段：
-- Phase 3: 雲端部署 (Railway/Render)
+**Phase 3 已完成！** Bot 已部署至 Zeabur：
+- 🌐 URL: https://line-bot4.zeabur.app
+- ✅ Webhook: https://line-bot4.zeabur.app/webhook
+
+**可選下一步：**
+- Phase 5: 進階功能 (自訂摘要風格、多語言等)
 
 ---
 
@@ -100,28 +104,32 @@
 
 ```
 Project: Line Bot Content Saver
-Phase: 2.5 (多 AI 提供者) ✅ COMPLETED
-Status: All features implemented and tested
+Phase: 3 (雲端部署) ✅ COMPLETED
+Status: Bot deployed and running on Zeabur 24/7
+Production URL: https://line-bot4.zeabur.app
 
 Key Changes (2026-02-03):
-- Multi AI Provider: 支援 Gemini 與 OpenAI 切換
-- OpenAI Service: gpt-4o-mini 用於文字摘要與圖片辨識
-- AI_PROVIDER: 環境變數控制使用哪個 AI
+- Zeabur Deployment: 自動偵測 Python + Procfile
+- Environment Variables: 完整設定於 Zeabur Dashboard
+- Google OAuth: GOOGLE_CREDENTIALS_BASE64 + GOOGLE_TOKEN_BASE64 雲端還原
+- Fixed Webhook: https://line-bot4.zeabur.app/webhook
 
-New Files:
-- src/infrastructure/openai_service.py (OpenAI 文字/圖片服務)
+Deployment Files:
+- main.py (根目錄入口點，支援 PORT 環境變數)
+- Procfile (uvicorn 啟動指令)
+- requirements.txt (所有依賴)
 
-Modified Files:
-- src/main.py (AI Provider 動態選擇)
-- requirements.txt (新增 openai>=1.0.0)
-- .env (新增 OPENAI_API_KEY, AI_PROVIDER)
+Cloud Environment Variables:
+- LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
+- GEMINI_API_KEY, OPENAI_API_KEY, AI_PROVIDER
+- NOTION_API_KEY, NOTION_DATABASE_ID
+- APIFY_API_TOKEN
+- GOOGLE_CREDENTIALS_BASE64, GOOGLE_TOKEN_BASE64, GOOGLE_DRIVE_FOLDER_ID
 
-New Environment Variables:
-- OPENAI_API_KEY (OpenAI API Key)
-- AI_PROVIDER (gemini 或 openai)
-
-Previous Phases:
+Completed Phases:
 - Phase 1: MVP Foundation ✅
 - Phase 4: 社群貼文支援 ✅
 - Phase 2: 圖片支援 ✅
+- Phase 2.5: 多 AI 提供者 ✅
+- Phase 3: 雲端部署 (Zeabur) ✅
 ```
