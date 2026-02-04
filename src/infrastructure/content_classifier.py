@@ -1,68 +1,55 @@
 """
 Infrastructure Layer: Content Classifier
 
-AI-powered content classification to determine the appropriate
-prompt template for summarization.
+AI-powered content classification with dynamic category support.
+Uses keyword matching and AI classification based on available templates.
 """
 
 from dataclasses import dataclass
-from typing import Optional
-from enum import Enum
+from typing import Optional, List, TYPE_CHECKING
 
-
-class ContentCategory(Enum):
-    """Supported content categories for prompt selection."""
-    TECH = "tech"           # 科技/程式/工具
-    PARENTING = "parenting" # 親子/育兒
-    FINANCE = "finance"     # 理財/投資
-    LIFESTYLE = "lifestyle" # 一般生活 (fallback)
+if TYPE_CHECKING:
+    from src.infrastructure.prompt_template_manager import PromptTemplateManager
 
 
 @dataclass
 class ClassificationResult:
     """Result of content classification."""
-    category: ContentCategory
+    category: str  # Now a string to support custom categories
     confidence: Optional[float] = None
     reason: Optional[str] = None
 
 
 class ContentClassifier:
     """
-    Classifies content into categories using AI.
+    Classifies content into categories using keywords and AI.
     
-    This determines which prompt template to use for summarization.
+    Supports dynamic categories based on templates in PromptTemplateManager.
     """
 
-    # Classification prompt template
-    CLASSIFICATION_PROMPT = """請分析以下內容，判斷它屬於哪個類別。
-
-類別選項：
-- tech: 科技、程式設計、軟體工具、AI、開源專案、技術教學
-- parenting: 親子教育、育兒、寶寶發展、家庭生活
-- finance: 投資理財、股票、加密貨幣、財務規劃
-- lifestyle: 其他生活類內容（預設）
-
-內容：
-{content}
-
-請只回答一個類別名稱（tech/parenting/finance/lifestyle），不要加任何其他文字。"""
-
-    def __init__(self, ai_service):
+    def __init__(self, ai_service, template_manager: "PromptTemplateManager" = None):
         """
         Initialize the classifier.
 
         Args:
             ai_service: AI service (Gemini or OpenAI) for classification
+            template_manager: Optional template manager for dynamic categories
         """
         self.ai_service = ai_service
+        self.template_manager = template_manager
 
-    async def classify(self, content: str, url: Optional[str] = None) -> ClassificationResult:
+    async def classify(
+        self, 
+        content: str, 
+        url: Optional[str] = None
+    ) -> ClassificationResult:
         """
         Classify content into a category.
 
         Strategy:
         1. First check URL patterns (fast path)
-        2. Fall back to AI classification
+        2. Then try keyword matching from templates
+        3. Fall back to AI classification with available categories
 
         Args:
             content: Content text to classify
@@ -75,16 +62,25 @@ class ContentClassifier:
         if url:
             url_category = self._classify_by_url(url)
             if url_category:
-                print(f"🏷️ [Classifier] URL match: {url_category.value}")
+                print(f"🏷️ [Classifier] URL match: {url_category}")
                 return ClassificationResult(
                     category=url_category,
                     reason="URL pattern match"
                 )
 
-        # Step 2: AI classification
+        # Step 2: Try keyword matching from templates
+        if self.template_manager:
+            keyword_match = self.template_manager.match_by_keywords(content)
+            if keyword_match:
+                return ClassificationResult(
+                    category=keyword_match,
+                    reason="Keyword match"
+                )
+
+        # Step 3: AI classification with dynamic categories
         return await self._classify_by_ai(content)
 
-    def _classify_by_url(self, url: str) -> Optional[ContentCategory]:
+    def _classify_by_url(self, url: str) -> Optional[str]:
         """Classify by URL pattern (fast path)."""
         url_lower = url.lower()
         
@@ -95,15 +91,15 @@ class ContentClassifier:
             "wired.com", "theverge.com", "arstechnica.com"
         ]
         if any(p in url_lower for p in tech_patterns):
-            return ContentCategory.TECH
+            return "tech"
 
         # Parenting patterns
         parenting_patterns = [
             "babyhome", "mombaby", "親子", "育兒",
-            "parenting", "baby"
+            "parenting", "baby", "flipedu.parenting"
         ]
         if any(p in url_lower for p in parenting_patterns):
-            return ContentCategory.PARENTING
+            return "parenting"
 
         # Finance patterns
         finance_patterns = [
@@ -111,44 +107,54 @@ class ContentClassifier:
             "yahoo.com/finance", "bloomberg", "cnbc"
         ]
         if any(p in url_lower for p in finance_patterns):
-            return ContentCategory.FINANCE
+            return "finance"
 
         return None
 
     async def _classify_by_ai(self, content: str) -> ClassificationResult:
-        """Classify using AI (slower but more accurate)."""
+        """Classify using AI with dynamic categories."""
         try:
+            # Get available categories from template manager
+            if self.template_manager:
+                categories = self.template_manager.get_all_categories()
+            else:
+                categories = ["tech", "parenting", "finance", "lifestyle"]
+            
+            # Build category descriptions for AI
+            category_list = ", ".join(categories)
+            
             # Truncate content if too long
             content_preview = content[:1500] if len(content) > 1500 else content
             
-            prompt = self.CLASSIFICATION_PROMPT.format(content=content_preview)
+            prompt = f"""請分析以下內容，判斷它最適合哪個類別。
+
+可用類別：{category_list}
+
+內容：
+{content_preview}
+
+請只回答一個類別名稱（從上述選項中選擇），不要加任何其他文字。"""
             
             # Use the AI service to classify
-            # We'll use a simple generate method
             result = await self.ai_service.generate_simple(prompt)
             
             # Parse result
             category_str = result.strip().lower()
             
-            # Map to enum
-            category_map = {
-                "tech": ContentCategory.TECH,
-                "parenting": ContentCategory.PARENTING,
-                "finance": ContentCategory.FINANCE,
-                "lifestyle": ContentCategory.LIFESTYLE
-            }
+            # Validate it's a known category
+            if category_str not in categories:
+                category_str = "lifestyle"  # Default fallback
             
-            category = category_map.get(category_str, ContentCategory.LIFESTYLE)
-            print(f"🏷️ [Classifier] AI classified as: {category.value}")
+            print(f"🏷️ [Classifier] AI classified as: {category_str}")
             
             return ClassificationResult(
-                category=category,
+                category=category_str,
                 reason="AI classification"
             )
 
         except Exception as e:
             print(f"⚠️ [Classifier] AI classification failed: {e}, using lifestyle")
             return ClassificationResult(
-                category=ContentCategory.LIFESTYLE,
+                category="lifestyle",
                 reason=f"Fallback due to error: {str(e)}"
             )

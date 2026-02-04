@@ -2,20 +2,20 @@
 Infrastructure Layer: Prompt Template Manager
 
 Manages prompt templates stored in Notion for different content categories.
-Supports user-customizable templates.
+Supports fully dynamic, user-customizable templates with keyword matching.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
-from src.infrastructure.content_classifier import ContentCategory
 
 
 @dataclass
 class PromptTemplate:
     """A prompt template for a specific content category."""
     name: str
-    category: ContentCategory
+    category: str  # Now a string to support custom categories
     prompt: str
+    keywords: List[str] = field(default_factory=list)
     active: bool = True
 
 
@@ -23,15 +23,14 @@ class PromptTemplateManager:
     """
     Manages prompt templates for different content categories.
     
-    Currently uses in-memory defaults, with future support for
-    Notion-based user-customizable templates.
+    Supports dynamic categories from Notion with keyword matching.
     """
 
-    # Default prompt templates
-    DEFAULT_TEMPLATES: Dict[ContentCategory, PromptTemplate] = {
-        ContentCategory.TECH: PromptTemplate(
+    # Default prompt templates (fallback when Notion not configured)
+    DEFAULT_TEMPLATES: Dict[str, PromptTemplate] = {
+        "tech": PromptTemplate(
             name="科技分析",
-            category=ContentCategory.TECH,
+            category="tech",
             prompt="""你是一位專業的科技評論家和技術分析師。請以客觀、專業的角度分析這段內容。
 
 請提供：
@@ -41,11 +40,12 @@ class PromptTemplateManager:
 4. **關鍵重點**：最重要的 3 個 takeaway
 
 請用繁體中文回答，風格專業但易懂。""",
+            keywords=["github", "api", "程式", "開源", "軟體", "AI", "python", "javascript"]
         ),
         
-        ContentCategory.PARENTING: PromptTemplate(
+        "parenting": PromptTemplate(
             name="親子教育",
-            category=ContentCategory.PARENTING,
+            category="parenting",
             prompt="""你是一位溫暖且經驗豐富的親子教育專家。請以鼓勵、支持的口吻分析這段內容。
 
 請提供：
@@ -55,11 +55,12 @@ class PromptTemplateManager:
 4. **暖心小語**：給爸媽的一句鼓勵
 
 請用繁體中文回答，語氣溫和、正向。""",
+            keywords=["育兒", "寶寶", "親子", "教養", "小孩", "兒童", "媽媽", "爸爸"]
         ),
         
-        ContentCategory.FINANCE: PromptTemplate(
+        "finance": PromptTemplate(
             name="投資理財",
-            category=ContentCategory.FINANCE,
+            category="finance",
             prompt="""你是一位專業的財務顧問。請以數據導向、謹慎的態度分析這段內容。
 
 請提供：
@@ -71,11 +72,12 @@ class PromptTemplateManager:
 ⚠️ 免責聲明：此為資訊分享，非投資建議。
 
 請用繁體中文回答，風格專業、謹慎。""",
+            keywords=["投資", "理財", "股票", "ETF", "基金", "財經", "存股"]
         ),
         
-        ContentCategory.LIFESTYLE: PromptTemplate(
+        "lifestyle": PromptTemplate(
             name="一般摘要",
-            category=ContentCategory.LIFESTYLE,
+            category="lifestyle",
             prompt="""請分析並摘要這段內容。
 
 請提供：
@@ -84,6 +86,7 @@ class PromptTemplateManager:
 3. **結論/洞見**：作者想傳達的核心訊息
 
 請用繁體中文回答，簡潔清晰。""",
+            keywords=[]
         ),
     }
 
@@ -97,33 +100,22 @@ class PromptTemplateManager:
         """
         self.notion_client = notion_client
         self.template_database_id = template_database_id
-        self._custom_templates: Dict[ContentCategory, PromptTemplate] = {}
+        self._templates: Dict[str, PromptTemplate] = dict(self.DEFAULT_TEMPLATES)
+        self._loaded_from_notion = False
 
-    def get_template(self, category: ContentCategory) -> PromptTemplate:
+    def get_template(self, category: str) -> PromptTemplate:
         """
         Get the prompt template for a category.
 
-        Priority:
-        1. Custom template (from Notion)
-        2. Default template
-
         Args:
-            category: Content category
+            category: Content category (string)
 
         Returns:
-            PromptTemplate for the category
+            PromptTemplate for the category, or lifestyle as fallback
         """
-        # Check custom templates first
-        if category in self._custom_templates:
-            return self._custom_templates[category]
-        
-        # Fall back to default
-        return self.DEFAULT_TEMPLATES.get(
-            category, 
-            self.DEFAULT_TEMPLATES[ContentCategory.LIFESTYLE]
-        )
+        return self._templates.get(category, self._templates.get("lifestyle"))
 
-    def get_prompt(self, category: ContentCategory) -> str:
+    def get_prompt(self, category: str) -> str:
         """
         Get just the prompt string for a category.
 
@@ -134,30 +126,62 @@ class PromptTemplateManager:
             Prompt string
         """
         template = self.get_template(category)
-        return template.prompt
+        return template.prompt if template else ""
 
     def list_templates(self) -> List[PromptTemplate]:
         """List all available templates."""
-        templates = []
-        for category in ContentCategory:
-            templates.append(self.get_template(category))
-        return templates
+        return list(self._templates.values())
 
-    def add_custom_template(self, template: PromptTemplate) -> None:
+    def get_all_categories(self) -> List[str]:
+        """Get all available category names."""
+        return list(self._templates.keys())
+
+    def get_all_keywords_map(self) -> Dict[str, List[str]]:
         """
-        Add a custom template (in-memory).
+        Get a mapping of category -> keywords.
+        Used by the classifier for keyword matching.
+        """
+        return {
+            category: template.keywords 
+            for category, template in self._templates.items()
+            if template.keywords
+        }
 
+    def match_by_keywords(self, content: str) -> Optional[str]:
+        """
+        Match content to a category based on keywords.
+        
         Args:
-            template: Custom template to add
+            content: Content text to match
+            
+        Returns:
+            Category name if matched, None otherwise
         """
-        self._custom_templates[template.category] = template
-        print(f"✅ [Templates] Added custom template: {template.name}")
+        content_lower = content.lower()
+        
+        best_match = None
+        best_score = 0
+        
+        for category, template in self._templates.items():
+            if not template.keywords:
+                continue
+                
+            score = sum(1 for kw in template.keywords if kw.lower() in content_lower)
+            
+            if score > best_score:
+                best_score = score
+                best_match = category
+        
+        if best_score >= 2:  # Require at least 2 keyword matches
+            print(f"🏷️ [Templates] Keyword match: {best_match} (score: {best_score})")
+            return best_match
+            
+        return None
 
     async def load_from_notion(self) -> None:
         """
-        Load custom templates from Notion database.
-        
-        Reads templates from Notion and populates _custom_templates.
+        Load templates from Notion database.
+        Replaces/extends default templates with user-defined ones.
         """
         if not self.notion_client or not self.template_database_id:
             print("⚠️ [Templates] Notion not configured, using defaults only")
@@ -184,18 +208,9 @@ class PromptTemplateManager:
                     name_prop = props.get("Name", {}).get("title", [])
                     name = name_prop[0]["text"]["content"] if name_prop else "Unnamed"
                     
-                    # Extract category
+                    # Extract category (now a free-form string)
                     category_prop = props.get("Category", {}).get("select", {})
-                    category_str = category_prop.get("name", "lifestyle").lower()
-                    
-                    # Map to ContentCategory
-                    category_map = {
-                        "tech": ContentCategory.TECH,
-                        "parenting": ContentCategory.PARENTING,
-                        "finance": ContentCategory.FINANCE,
-                        "lifestyle": ContentCategory.LIFESTYLE
-                    }
-                    category = category_map.get(category_str, ContentCategory.LIFESTYLE)
+                    category = category_prop.get("name", "lifestyle").lower()
                     
                     # Extract prompt
                     prompt_prop = props.get("Prompt", {}).get("rich_text", [])
@@ -205,67 +220,32 @@ class PromptTemplateManager:
                         print(f"⚠️ [Templates] Skipping '{name}': empty prompt")
                         continue
                     
-                    # Extract keywords (optional)
+                    # Extract keywords
                     keywords_prop = props.get("Keywords", {}).get("rich_text", [])
                     keywords_str = keywords_prop[0]["text"]["content"] if keywords_prop else ""
-                    keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+                    keywords = [k.strip().lower() for k in keywords_str.split(",") if k.strip()]
                     
                     # Create template
                     template = PromptTemplate(
                         name=name,
                         category=category,
                         prompt=prompt,
+                        keywords=keywords,
                         active=True
                     )
                     
-                    # Store it
-                    self._custom_templates[category] = template
+                    # Store it (overwrites defaults if same category)
+                    self._templates[category] = template
                     loaded_count += 1
-                    print(f"✅ [Templates] Loaded: {name} → {category.value}")
+                    print(f"✅ [Templates] Loaded: {name} → {category} (keywords: {keywords})")
                     
                 except Exception as e:
                     print(f"⚠️ [Templates] Error parsing template: {e}")
                     continue
             
-            print(f"📋 [Templates] Loaded {loaded_count} custom templates from Notion")
+            self._loaded_from_notion = True
+            print(f"📋 [Templates] Loaded {loaded_count} templates from Notion")
+            print(f"📋 [Templates] Total categories: {list(self._templates.keys())}")
             
         except Exception as e:
             print(f"❌ [Templates] Failed to load from Notion: {e}")
-
-
-# Convenience function to build full summarization prompt
-def build_summarization_prompt(
-    content: str, 
-    template: PromptTemplate,
-    content_type: str = "text"
-) -> str:
-    """
-    Build the full prompt for summarization.
-
-    Args:
-        content: Content to summarize
-        template: Prompt template to use
-        content_type: Type of content (text/url/youtube/etc)
-
-    Returns:
-        Complete prompt string
-    """
-    return f"""{template.prompt}
-
----
-
-以下是需要分析的內容（類型：{content_type}）：
-
-{content}
-
----
-
-請根據上述指示進行分析和摘要。
-另外請產生：
-- 一個简短的標題（10-20 字）
-- 3-5 個相關標籤（用於分類）
-
-格式：
-標題：[標題]
-標籤：[標籤1], [標籤2], [標籤3]
-摘要：[摘要內容]"""

@@ -12,7 +12,7 @@ from src.domain.content import (
     Content, ContentType, SocialPlatform,
     create_text_content, create_url_content, create_social_content
 )
-from src.infrastructure.content_classifier import ContentClassifier, ContentCategory
+from src.infrastructure.content_classifier import ContentClassifier
 from src.infrastructure.prompt_template_manager import PromptTemplateManager
 
 
@@ -120,10 +120,14 @@ class SummarizeUseCase:
         
         # Initialize smart prompt components
         if enable_smart_prompt:
-            self.classifier = ContentClassifier(ai_service=ai_service)
             self.template_manager = PromptTemplateManager(
                 notion_client=notion_client,
                 template_database_id=template_database_id
+            )
+            # Pass template_manager to classifier for dynamic categories
+            self.classifier = ContentClassifier(
+                ai_service=ai_service,
+                template_manager=self.template_manager
             )
         else:
             self.classifier = None
@@ -233,7 +237,7 @@ class SummarizeUseCase:
                 
                 # Get the prompt template
                 custom_prompt = self.template_manager.get_prompt(classification.category)
-                print(f"🏷️ [Summarize] Using {classification.category.value} template")
+                print(f"🏷️ [Summarize] Using {classification.category} template")
                 
             except Exception as e:
                 print(f"⚠️ [Summarize] Smart prompt failed, using default: {e}")
