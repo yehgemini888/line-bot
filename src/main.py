@@ -29,6 +29,7 @@ from src.infrastructure.apify_scraper import ApifyScraper
 from src.infrastructure.image_detector import ImageDetector
 from src.infrastructure.drive_service import GoogleDriveService
 from src.infrastructure.youtube_service import YouTubeService
+from src.infrastructure.telegram_handler import TelegramHandler
 
 # UseCase imports
 from src.usecase.summarize import SummarizeUseCase
@@ -50,6 +51,7 @@ NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 
 def validate_config():
@@ -91,6 +93,7 @@ def get_ai_service():
 
 # Initialize components (lazy loading)
 _handler: LineMessageHandler = None
+_telegram_handler: TelegramHandler = None
 _parser: WebhookParser = None
 _process_image_usecase: ProcessImageUseCase = None
 _image_enabled: bool = False
@@ -173,6 +176,43 @@ def get_parser() -> WebhookParser:
     if _parser is None:
         _parser = WebhookParser(channel_secret=LINE_CHANNEL_SECRET)
     return _parser
+
+
+def get_telegram_handler() -> TelegramHandler:
+    """Get or create the Telegram handler."""
+    global _telegram_handler
+    if _telegram_handler is None and TELEGRAM_BOT_TOKEN:
+        # Infrastructure (reuse same components)
+        web_scraper = WebScraper()
+        social_detector = SocialDetector()
+        image_detector = ImageDetector()
+        apify_scraper = ApifyScraper(api_token=APIFY_API_TOKEN)
+        ai_service = get_ai_service()
+        youtube_service = YouTubeService(api_token=APIFY_API_TOKEN)
+        notion_repo = NotionRepository(
+            api_key=NOTION_API_KEY,
+            database_id=NOTION_DATABASE_ID
+        )
+
+        # UseCases
+        summarize_usecase = SummarizeUseCase(
+            ai_service=ai_service,
+            web_scraper=web_scraper,
+            social_scraper=apify_scraper
+        )
+        save_usecase = SaveToNotionUseCase(repository=notion_repo)
+
+        # Telegram Handler
+        _telegram_handler = TelegramHandler(
+            bot_token=TELEGRAM_BOT_TOKEN,
+            summarize_usecase=summarize_usecase,
+            save_usecase=save_usecase,
+            social_detector=social_detector,
+            image_detector=image_detector,
+            youtube_service=youtube_service,
+            ai_service=ai_service
+        )
+    return _telegram_handler
 
 
 def restore_google_token():
@@ -384,6 +424,45 @@ async def process_image_message(
         print(f"❌ Error processing image: {e}")
         error_msg = f"❌ 發生錯誤：{str(e)}"
         await handler.push_message(user_id, error_msg)
+
+
+# ============================================
+# Telegram Webhook
+# ============================================
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Telegram Webhook endpoint.
+
+    Receives updates from Telegram and processes messages.
+    Returns 200 OK immediately, processes in background.
+    """
+    try:
+        update = await request.json()
+        print(f"📩 [Telegram] Webhook received")
+
+        # Process in background
+        background_tasks.add_task(process_telegram_update, update)
+
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"❌ [Telegram] Webhook error: {e}")
+        return {"status": "ok", "error": str(e)}
+
+
+async def process_telegram_update(update: dict):
+    """Process Telegram update in background."""
+    handler = get_telegram_handler()
+
+    if handler is None:
+        print("❌ [Telegram] Handler not initialized (missing TELEGRAM_BOT_TOKEN)")
+        return
+
+    try:
+        await handler.handle_update(update)
+    except Exception as e:
+        print(f"❌ [Telegram] Error processing update: {e}")
 
 
 if __name__ == "__main__":
