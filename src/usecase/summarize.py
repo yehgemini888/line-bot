@@ -2,6 +2,7 @@
 UseCase Layer: Summarize Content
 
 Orchestrates web scraping, social media scraping, and AI summarization.
+Includes smart prompt selection based on content category.
 """
 
 from dataclasses import dataclass
@@ -11,13 +12,18 @@ from src.domain.content import (
     Content, ContentType, SocialPlatform,
     create_text_content, create_url_content, create_social_content
 )
+from src.infrastructure.content_classifier import ContentClassifier, ContentCategory
+from src.infrastructure.prompt_template_manager import PromptTemplateManager
 
 
 # Define interfaces (ports) for dependency injection
 class AIService(Protocol):
     """Interface for AI summarization service."""
 
-    async def summarize(self, content: str, content_type: str) -> "AISummaryResult":
+    async def summarize(self, content: str, content_type: str, custom_prompt: str = None) -> "AISummaryResult":
+        ...
+
+    async def generate_simple(self, prompt: str) -> str:
         ...
 
 
@@ -83,13 +89,16 @@ class SummarizeUseCase:
 
     Takes raw input (text or URL), processes it, and returns
     a Content entity with AI-generated summary and tags.
+    
+    Includes smart prompt selection based on content category.
     """
 
     def __init__(
         self,
         ai_service: AIService,
         web_scraper: WebScraperService,
-        social_scraper: SocialScraperService
+        social_scraper: SocialScraperService,
+        enable_smart_prompt: bool = True
     ):
         """
         Initialize the use case.
@@ -98,10 +107,20 @@ class SummarizeUseCase:
             ai_service: AI service for summarization (Gemini)
             web_scraper: Web scraper for URL content extraction
             social_scraper: Social scraper for social media content
+            enable_smart_prompt: Enable smart prompt selection
         """
         self.ai_service = ai_service
         self.web_scraper = web_scraper
         self.social_scraper = social_scraper
+        self.enable_smart_prompt = enable_smart_prompt
+        
+        # Initialize smart prompt components
+        if enable_smart_prompt:
+            self.classifier = ContentClassifier(ai_service=ai_service)
+            self.template_manager = PromptTemplateManager()
+        else:
+            self.classifier = None
+            self.template_manager = None
 
     async def execute(
         self,
@@ -134,9 +153,6 @@ class SummarizeUseCase:
 
             # Use scraped content for summarization
             text_to_summarize = scrape_result.text_content
-            if scrape_result.title:
-                content.title = scrape_result.title
-
             if scrape_result.title:
                 content.title = scrape_result.title
 
@@ -189,7 +205,7 @@ class SummarizeUseCase:
             content = create_text_content(raw_input)
             text_to_summarize = raw_input
 
-        # Step 2: Summarize with AI
+        # Step 2: Check if content is empty
         if not text_to_summarize.strip():
             return SummarizeResult(
                 content=content,
@@ -197,9 +213,30 @@ class SummarizeUseCase:
                 error_message="內容為空，無法進行摘要"
             )
 
+        # Step 3: Smart prompt selection (classify content and get template)
+        custom_prompt = None
+        if self.enable_smart_prompt and self.classifier and self.template_manager:
+            try:
+                # Classify the content
+                url_for_classify = raw_input if input_type == ContentType.URL else None
+                classification = await self.classifier.classify(
+                    content=text_to_summarize[:1500],
+                    url=url_for_classify
+                )
+                
+                # Get the prompt template
+                custom_prompt = self.template_manager.get_prompt(classification.category)
+                print(f"🏷️ [Summarize] Using {classification.category.value} template")
+                
+            except Exception as e:
+                print(f"⚠️ [Summarize] Smart prompt failed, using default: {e}")
+                custom_prompt = None
+
+        # Step 4: Summarize with AI
         summary_result = await self.ai_service.summarize(
             content=text_to_summarize,
-            content_type=input_type.value
+            content_type=input_type.value,
+            custom_prompt=custom_prompt
         )
 
         if not summary_result.success:
@@ -209,7 +246,7 @@ class SummarizeUseCase:
                 error_message=f"AI 摘要失敗: {summary_result.error_message}"
             )
 
-        # Step 3: Update content entity with AI results
+        # Step 5: Update content entity with AI results
         content.title = summary_result.title
         content.summary = summary_result.summary
         content.tags = summary_result.tags

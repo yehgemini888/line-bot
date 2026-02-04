@@ -53,19 +53,25 @@ class OpenAIService:
         self.text_model = text_model
         self.vision_model = vision_model
 
-    async def summarize(self, content: str, content_type: str = "text") -> SummaryResult:
+    async def summarize(
+        self, 
+        content: str, 
+        content_type: str = "text",
+        custom_prompt: str = None
+    ) -> SummaryResult:
         """
         Summarize content using OpenAI.
 
         Args:
             content: The text content to summarize
             content_type: Type of content ("text" or "url")
+            custom_prompt: Optional custom prompt template to use
 
         Returns:
             SummaryResult with title, summary, and tags
         """
         try:
-            prompt = self._build_prompt(content, content_type)
+            prompt = self._build_prompt(content, content_type, custom_prompt)
 
             response = await self.client.chat.completions.create(
                 model=self.text_model,
@@ -96,6 +102,30 @@ class OpenAIService:
                 success=False,
                 error_message=str(e)
             )
+
+    async def generate_simple(self, prompt: str) -> str:
+        """
+        Generate a simple text response (for classification, etc).
+
+        Args:
+            prompt: The prompt to send
+
+        Returns:
+            Generated text response
+        """
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.text_model,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=50
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"❌ [OpenAI] generate_simple error: {e}")
+            return ""
 
     async def analyze_image(
         self,
@@ -159,12 +189,40 @@ class OpenAIService:
                 error_message=str(e)
             )
 
-    def _build_prompt(self, content: str, content_type: str) -> str:
+    def _build_prompt(
+        self, 
+        content: str, 
+        content_type: str,
+        custom_prompt: str = None
+    ) -> str:
         """Build the summarization prompt."""
         max_length = 10000
         if len(content) > max_length:
             content = content[:max_length] + "...(truncated)"
 
+        # Use custom prompt if provided
+        if custom_prompt:
+            return f"""{custom_prompt}
+
+---
+
+以下是需要分析的內容（類型：{content_type}）：
+
+{content}
+
+---
+
+請根據上述指示進行分析和摘要。
+請嚴格按照以下格式回覆：
+
+標題：[用一句話概括主題，15字以內]
+
+摘要：[根據上述指示產生的摘要內容]
+
+標籤：[提供3-5個相關標籤，用逗號分隔]
+"""
+
+        # Default prompt
         source_desc = "網頁內容" if content_type == "url" else "文字內容"
 
         return f"""請分析以下{source_desc}，並以繁體中文回覆：
