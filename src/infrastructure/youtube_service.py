@@ -134,11 +134,12 @@ class YouTubeService:
             print(f"🔍 [Apify] Running actor: {self.YOUTUBE_ACTOR}")
             
             # Input for streamers/youtube-scraper
+            # Note: subtitlesLanguage only supports: "any", "en", "de", "es", "fr", "it", "ja", "ko", "nl", "pt", "ru"
             run_input = {
                 "startUrls": [{"url": url}],
                 "maxResults": 1,
                 "downloadSubtitles": True,
-                "subtitlesLanguage": "zh-TW,zh,en",  # Prefer Traditional Chinese
+                "subtitlesLanguage": "any",  # Get all available subtitles, we'll filter later
                 "subtitlesFormat": "srt"
             }
             
