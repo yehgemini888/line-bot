@@ -48,7 +48,8 @@ class LineMessageHandler:
         image_detector: Optional[ImageDetector] = None,
         process_image_usecase = None,
         youtube_service = None,
-        ai_service = None
+        ai_service = None,
+        whisper_service = None
     ):
         """
         Initialize the handler.
@@ -62,6 +63,7 @@ class LineMessageHandler:
             process_image_usecase: Use case for processing images
             youtube_service: Service for fetching YouTube video info and captions
             ai_service: AI service for summarization (Gemini/OpenAI)
+            whisper_service: Service for speech-to-text transcription
         """
         configuration = Configuration(access_token=channel_access_token)
         self.api_client = AsyncApiClient(configuration)
@@ -74,6 +76,7 @@ class LineMessageHandler:
         self.process_image_usecase = process_image_usecase
         self.youtube_service = youtube_service
         self.ai_service = ai_service
+        self.whisper_service = whisper_service
 
     async def handle_message(self, event: MessageEvent) -> None:
         """
@@ -574,6 +577,121 @@ class LineMessageHandler:
 {content.summary}
 
 🏷️ 標籤：{tags_str}{caption_note}"""
+
+        if page_url:
+            response += f"\n\n📄 Notion 連結：{page_url}"
+
+        return response
+
+    async def handle_audio_message(self, user_id: str, message_id: str) -> str:
+        """
+        Handle audio/voice message.
+
+        Args:
+            user_id: Line user ID
+            message_id: Line message ID
+
+        Returns:
+            Response message string
+        """
+        from src.domain.content import create_audio_content
+
+        if not self.whisper_service:
+            return "❌ 語音功能未啟用"
+
+        print(f"🎙️ [Audio] Processing audio message: {message_id}")
+
+        try:
+            # Download audio from Line
+            audio_bytes = await self._get_message_content(message_id)
+            if not audio_bytes:
+                return "❌ 無法下載音檔"
+
+            print(f"🎙️ [Audio] Downloaded {len(audio_bytes)} bytes")
+
+            # Transcribe with Whisper
+            transcription_result = await self.whisper_service.transcribe(
+                audio_bytes,
+                filename="audio.m4a"  # Line uses m4a format
+            )
+
+            if not transcription_result.success:
+                return f"❌ 語音轉文字失敗：{transcription_result.error_message}"
+
+            transcribed_text = transcription_result.text
+            duration = transcription_result.duration_seconds
+
+            print(f"🎙️ [Audio] Transcribed: {transcribed_text[:50]}...")
+
+            # Summarize the transcription
+            if not self.ai_service:
+                return f"✅ 語音轉文字完成：\n\n{transcribed_text}"
+
+            summary_result = await self.ai_service.summarize(
+                content=transcribed_text,
+                content_type="audio"
+            )
+
+            if not summary_result.success:
+                # Return transcription even if summarization fails
+                return f"✅ 語音轉文字完成（摘要失敗）：\n\n{transcribed_text}"
+
+            # Create content entity
+            content = create_audio_content(
+                transcription=transcribed_text,
+                duration_seconds=duration
+            )
+            content.title = summary_result.title
+            content.summary = summary_result.summary
+            content.tags = summary_result.tags
+
+            # Save to Notion
+            save_result = await self.save_usecase.execute(content)
+
+            if not save_result.success:
+                return f"❌ 儲存失敗：{save_result.error_message}"
+
+            # Build response
+            return self._build_audio_success_response(
+                content,
+                transcribed_text,
+                duration,
+                save_result.page_url
+            )
+
+        except Exception as e:
+            print(f"❌ [Audio] Error: {e}")
+            return f"❌ 處理語音訊息時發生錯誤：{str(e)}"
+
+    def _build_audio_success_response(
+        self,
+        content,
+        transcription: str,
+        duration: Optional[float],
+        page_url: Optional[str] = None
+    ) -> str:
+        """Build success response for audio processing."""
+        tags_str = ", ".join(content.tags) if content.tags else "無"
+        duration_str = f"{int(duration)}秒" if duration else "未知"
+
+        # Truncate transcription if too long
+        display_transcription = transcription
+        if len(transcription) > 200:
+            display_transcription = transcription[:200] + "..."
+
+        response = f"""✅ 語音訊息已儲存至 Notion！
+
+🎙️ 時長：{duration_str}
+
+📝 轉錄內容：
+{display_transcription}
+
+📌 標題：{content.title}
+
+📋 摘要：
+{content.summary}
+
+🏷️ 標籤：{tags_str}"""
 
         if page_url:
             response += f"\n\n📄 Notion 連結：{page_url}"

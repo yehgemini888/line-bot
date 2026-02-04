@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from linebot.v3.webhook import WebhookParser
-from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent
+from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, AudioMessageContent
 from linebot.v3.exceptions import InvalidSignatureError
 
 # Load environment variables
@@ -30,6 +30,7 @@ from src.infrastructure.image_detector import ImageDetector
 from src.infrastructure.drive_service import GoogleDriveService
 from src.infrastructure.youtube_service import YouTubeService
 from src.infrastructure.telegram_handler import TelegramHandler
+from src.infrastructure.whisper_service import WhisperService
 
 # UseCase imports
 from src.usecase.summarize import SummarizeUseCase
@@ -156,6 +157,12 @@ def get_handler() -> LineMessageHandler:
         save_usecase = SaveToNotionUseCase(repository=notion_repo)
         process_image_usecase = get_process_image_usecase()
 
+        # Whisper Service (for voice messages)
+        whisper_service = None
+        if OPENAI_API_KEY:
+            whisper_service = WhisperService(api_key=OPENAI_API_KEY)
+            print("🎙️ Whisper service: ENABLED")
+
         # Handler
         _handler = LineMessageHandler(
             channel_access_token=LINE_CHANNEL_ACCESS_TOKEN,
@@ -165,7 +172,8 @@ def get_handler() -> LineMessageHandler:
             image_detector=image_detector,
             process_image_usecase=process_image_usecase,
             youtube_service=youtube_service,
-            ai_service=ai_service
+            ai_service=ai_service,
+            whisper_service=whisper_service
         )
     return _handler
 
@@ -348,6 +356,14 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
                     message_id=event.message.id,
                     reply_token=event.reply_token
                 )
+            elif isinstance(event.message, AudioMessageContent):
+                # Process audio/voice message in background
+                background_tasks.add_task(
+                    process_audio_message,
+                    user_id=event.source.user_id,
+                    message_id=event.message.id,
+                    reply_token=event.reply_token
+                )
 
     # Return immediately - Line requires fast response
     return {"status": "ok"}
@@ -423,6 +439,41 @@ async def process_image_message(
     except Exception as e:
         print(f"❌ Error processing image: {e}")
         error_msg = f"❌ 發生錯誤：{str(e)}"
+        await handler.push_message(user_id, error_msg)
+
+
+async def process_audio_message(
+    user_id: str,
+    message_id: str,
+    reply_token: str
+):
+    """
+    Process audio/voice message in background.
+
+    Args:
+        user_id: User ID for push message
+        message_id: Message ID for downloading audio
+        reply_token: Reply token (may expire)
+    """
+    handler = get_handler()
+
+    try:
+        print(f"🎙️ Processing audio from {user_id}: {message_id}")
+
+        # Send processing message
+        await handler.push_message(user_id, "收到語音訊息！正在轉錄中... 🎙️")
+
+        # Process audio
+        result = await handler.handle_audio_message(user_id, message_id)
+
+        # Send result via push message
+        await handler.push_message(user_id, result)
+
+        print(f"✅ Audio processed successfully for {user_id}")
+
+    except Exception as e:
+        print(f"❌ Error processing audio: {e}")
+        error_msg = f"❌ 處理語音訊息時發生錯誤：{str(e)}"
         await handler.push_message(user_id, error_msg)
 
 

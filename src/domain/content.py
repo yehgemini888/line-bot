@@ -25,6 +25,7 @@ class ContentType(Enum):
     SOCIAL = "social"
     IMAGE = "image"
     YOUTUBE = "youtube"
+    AUDIO = "audio"  # Voice messages
 
 
 @dataclass
@@ -168,4 +169,32 @@ def create_youtube_content(
         author=channel_name,
         channel_name=channel_name,
         video_duration=video_duration
+    )
+
+
+def create_audio_content(
+    transcription: str,
+    duration_seconds: Optional[float] = None
+) -> Content:
+    """
+    Factory function to create an AUDIO type content.
+
+    Args:
+        transcription: Transcribed text from audio
+        duration_seconds: Audio duration in seconds
+
+    Returns:
+        Content entity with AUDIO type
+    """
+    # Format duration as "MM:SS" if provided
+    duration_str = None
+    if duration_seconds:
+        minutes = int(duration_seconds // 60)
+        seconds = int(duration_seconds % 60)
+        duration_str = f"{minutes}:{seconds:02d}"
+
+    return Content(
+        content_type=ContentType.AUDIO,
+        raw_content=transcription,
+        video_duration=duration_str  # Reuse this field for audio duration
     )
