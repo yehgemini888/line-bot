@@ -49,6 +49,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "auto").lower()  # "auto", "gemini", or "openai"
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+NOTION_TEMPLATE_DATABASE_ID = os.getenv("NOTION_TEMPLATE_DATABASE_ID")
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
@@ -148,11 +149,13 @@ def get_handler() -> LineMessageHandler:
             database_id=NOTION_DATABASE_ID
         )
 
-        # UseCases
+        # UseCases (with Notion client for template loading)
         summarize_usecase = SummarizeUseCase(
             ai_service=ai_service,
             web_scraper=web_scraper,
-            social_scraper=apify_scraper
+            social_scraper=apify_scraper,
+            notion_client=notion_repo.client if NOTION_TEMPLATE_DATABASE_ID else None,
+            template_database_id=NOTION_TEMPLATE_DATABASE_ID
         )
         save_usecase = SaveToNotionUseCase(repository=notion_repo)
         process_image_usecase = get_process_image_usecase()

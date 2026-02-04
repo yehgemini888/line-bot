@@ -20,19 +20,38 @@ class FallbackAIService:
         self.primary = GeminiService(api_key=gemini_api_key)
         self.fallback = OpenAIService(api_key=openai_api_key)
 
-    async def summarize(self, content: str, content_type: str = "text") -> SummaryResult:
+    async def summarize(
+        self, 
+        content: str, 
+        content_type: str = "text",
+        custom_prompt: str = None
+    ) -> SummaryResult:
         """
         Summarize content. Tries Gemini first, falls back to OpenAI.
         """
         try:
-            result = await self.primary.summarize(content, content_type)
+            result = await self.primary.summarize(content, content_type, custom_prompt)
             if result.success:
                 return result
             print(f"⚠️ [Fallback] Gemini returned failure: {result.error_message}, switching to OpenAI")
         except Exception as e:
             print(f"⚠️ [Fallback] Gemini raised exception: {e}, switching to OpenAI")
 
-        return await self.fallback.summarize(content, content_type)
+        return await self.fallback.summarize(content, content_type, custom_prompt)
+
+    async def generate_simple(self, prompt: str) -> str:
+        """
+        Generate a simple text response. Tries Gemini first, falls back to OpenAI.
+        """
+        try:
+            result = await self.primary.generate_simple(prompt)
+            if result:
+                return result
+            print(f"⚠️ [Fallback] Gemini generate_simple empty, switching to OpenAI")
+        except Exception as e:
+            print(f"⚠️ [Fallback] Gemini generate_simple exception: {e}, switching to OpenAI")
+
+        return await self.fallback.generate_simple(prompt)
 
     async def analyze_image(
         self,
@@ -51,3 +70,4 @@ class FallbackAIService:
             print(f"⚠️ [Fallback] Gemini Vision raised exception: {e}, switching to OpenAI")
 
         return await self.fallback.analyze_image(image_data, mime_type)
+

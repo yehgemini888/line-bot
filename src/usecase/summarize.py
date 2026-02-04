@@ -98,7 +98,9 @@ class SummarizeUseCase:
         ai_service: AIService,
         web_scraper: WebScraperService,
         social_scraper: SocialScraperService,
-        enable_smart_prompt: bool = True
+        enable_smart_prompt: bool = True,
+        notion_client=None,
+        template_database_id: Optional[str] = None
     ):
         """
         Initialize the use case.
@@ -108,6 +110,8 @@ class SummarizeUseCase:
             web_scraper: Web scraper for URL content extraction
             social_scraper: Social scraper for social media content
             enable_smart_prompt: Enable smart prompt selection
+            notion_client: Optional Notion client for custom templates
+            template_database_id: Optional Notion database ID for templates
         """
         self.ai_service = ai_service
         self.web_scraper = web_scraper
@@ -117,7 +121,10 @@ class SummarizeUseCase:
         # Initialize smart prompt components
         if enable_smart_prompt:
             self.classifier = ContentClassifier(ai_service=ai_service)
-            self.template_manager = PromptTemplateManager()
+            self.template_manager = PromptTemplateManager(
+                notion_client=notion_client,
+                template_database_id=template_database_id
+            )
         else:
             self.classifier = None
             self.template_manager = None

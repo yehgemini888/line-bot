@@ -157,17 +157,80 @@ class PromptTemplateManager:
         """
         Load custom templates from Notion database.
         
-        Future implementation: Query Notion database and populate
-        _custom_templates with user-defined templates.
+        Reads templates from Notion and populates _custom_templates.
         """
         if not self.notion_client or not self.template_database_id:
             print("⚠️ [Templates] Notion not configured, using defaults only")
             return
 
-        # TODO: Implement Notion loading
-        # This will query the Prompt Templates database
-        # and load user-customized templates
-        print("📋 [Templates] Notion template loading not yet implemented")
+        try:
+            print(f"📋 [Templates] Loading from Notion: {self.template_database_id[:8]}...")
+            
+            # Query the database
+            response = self.notion_client.databases.query(
+                database_id=self.template_database_id,
+                filter={
+                    "property": "Active",
+                    "checkbox": {"equals": True}
+                }
+            )
+            
+            loaded_count = 0
+            for page in response.get("results", []):
+                try:
+                    props = page.get("properties", {})
+                    
+                    # Extract name
+                    name_prop = props.get("Name", {}).get("title", [])
+                    name = name_prop[0]["text"]["content"] if name_prop else "Unnamed"
+                    
+                    # Extract category
+                    category_prop = props.get("Category", {}).get("select", {})
+                    category_str = category_prop.get("name", "lifestyle").lower()
+                    
+                    # Map to ContentCategory
+                    category_map = {
+                        "tech": ContentCategory.TECH,
+                        "parenting": ContentCategory.PARENTING,
+                        "finance": ContentCategory.FINANCE,
+                        "lifestyle": ContentCategory.LIFESTYLE
+                    }
+                    category = category_map.get(category_str, ContentCategory.LIFESTYLE)
+                    
+                    # Extract prompt
+                    prompt_prop = props.get("Prompt", {}).get("rich_text", [])
+                    prompt = prompt_prop[0]["text"]["content"] if prompt_prop else ""
+                    
+                    if not prompt:
+                        print(f"⚠️ [Templates] Skipping '{name}': empty prompt")
+                        continue
+                    
+                    # Extract keywords (optional)
+                    keywords_prop = props.get("Keywords", {}).get("rich_text", [])
+                    keywords_str = keywords_prop[0]["text"]["content"] if keywords_prop else ""
+                    keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+                    
+                    # Create template
+                    template = PromptTemplate(
+                        name=name,
+                        category=category,
+                        prompt=prompt,
+                        active=True
+                    )
+                    
+                    # Store it
+                    self._custom_templates[category] = template
+                    loaded_count += 1
+                    print(f"✅ [Templates] Loaded: {name} → {category.value}")
+                    
+                except Exception as e:
+                    print(f"⚠️ [Templates] Error parsing template: {e}")
+                    continue
+            
+            print(f"📋 [Templates] Loaded {loaded_count} custom templates from Notion")
+            
+        except Exception as e:
+            print(f"❌ [Templates] Failed to load from Notion: {e}")
 
 
 # Convenience function to build full summarization prompt
