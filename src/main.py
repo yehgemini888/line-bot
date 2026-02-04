@@ -202,6 +202,11 @@ def get_telegram_handler() -> TelegramHandler:
             database_id=NOTION_DATABASE_ID
         )
 
+        # Whisper Service (for voice messages)
+        whisper_service = None
+        if OPENAI_API_KEY:
+            whisper_service = WhisperService(api_key=OPENAI_API_KEY)
+
         # UseCases
         summarize_usecase = SummarizeUseCase(
             ai_service=ai_service,
@@ -218,7 +223,8 @@ def get_telegram_handler() -> TelegramHandler:
             social_detector=social_detector,
             image_detector=image_detector,
             youtube_service=youtube_service,
-            ai_service=ai_service
+            ai_service=ai_service,
+            whisper_service=whisper_service
         )
     return _telegram_handler
 

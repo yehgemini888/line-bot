@@ -50,7 +50,8 @@ class TelegramHandler:
         social_detector: SocialDetector,
         image_detector: Optional[ImageDetector] = None,
         youtube_service=None,
-        ai_service=None
+        ai_service=None,
+        whisper_service=None
     ):
         """
         Initialize the handler.
@@ -72,6 +73,7 @@ class TelegramHandler:
         self.image_detector = image_detector or ImageDetector()
         self.youtube_service = youtube_service
         self.ai_service = ai_service
+        self.whisper_service = whisper_service
 
     def parse_update(self, update: dict) -> Optional[TelegramUpdate]:
         """Parse Telegram update JSON to TelegramUpdate object."""
@@ -123,6 +125,23 @@ class TelegramHandler:
         Args:
             update: Raw Telegram update JSON
         """
+        message = update.get("message", {})
+        if not message:
+            return
+
+        chat_id = message.get("chat", {}).get("id")
+        username = message.get("from", {}).get("username", "Unknown")
+
+        # Check for voice message
+        voice = message.get("voice")
+        if voice:
+            print(f"🎙️ [Telegram] Voice from @{username}")
+            await self.send_message(chat_id, "收到語音訊息！正在轉錄中... 🎙️")
+            response = await self._handle_voice_message(voice, chat_id)
+            await self.send_message(chat_id, response)
+            return
+
+        # Check for text message
         parsed = self.parse_update(update)
         if not parsed:
             return
@@ -308,6 +327,156 @@ class TelegramHandler:
 {content.summary}
 
 🏷️ 標籤：{tags_str}{caption_note}"""
+
+        if page_url:
+            response += f"\n\n📄 Notion 連結：{page_url}"
+
+        return response
+
+    async def _handle_voice_message(self, voice: dict, chat_id: int) -> str:
+        """
+        Handle voice message with Whisper transcription.
+
+        Args:
+            voice: Voice object from Telegram update
+            chat_id: Chat ID for sending messages
+
+        Returns:
+            Response message string
+        """
+        from src.domain.content import create_audio_content
+
+        if not self.whisper_service:
+            return "❌ 語音功能未啟用"
+
+        try:
+            file_id = voice.get("file_id")
+            duration = voice.get("duration", 0)
+
+            print(f"🎙️ [Telegram] Voice file_id: {file_id}, duration: {duration}s")
+
+            # Get file path from Telegram
+            file_info = await self._get_file_info(file_id)
+            if not file_info:
+                return "❌ 無法取得音檔資訊"
+
+            file_path = file_info.get("file_path")
+            if not file_path:
+                return "❌ 無法取得音檔路徑"
+
+            # Download file
+            file_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+            audio_bytes = await self._download_file(file_url)
+            if not audio_bytes:
+                return "❌ 無法下載音檔"
+
+            print(f"🎙️ [Telegram] Downloaded {len(audio_bytes)} bytes")
+
+            # Transcribe with Whisper
+            result = await self.whisper_service.transcribe(
+                audio_bytes,
+                filename="voice.ogg"  # Telegram uses ogg format
+            )
+
+            if not result.success:
+                return f"❌ 語音轉文字失敗：{result.error_message}"
+
+            transcribed_text = result.text
+            print(f"🎙️ [Telegram] Transcribed: {transcribed_text[:50]}...")
+
+            # Summarize the transcription
+            if not self.ai_service:
+                return f"✅ 語音轉文字完成：\n\n{transcribed_text}"
+
+            summary_result = await self.ai_service.summarize(
+                content=transcribed_text,
+                content_type="audio"
+            )
+
+            if not summary_result.success:
+                return f"✅ 語音轉文字完成：\n\n{transcribed_text}"
+
+            # Create content entity
+            content = create_audio_content(
+                transcription=transcribed_text,
+                duration_seconds=duration
+            )
+            content.title = summary_result.title
+            content.summary = summary_result.summary
+            content.tags = summary_result.tags
+
+            # Save to Notion
+            save_result = await self.save_usecase.execute(content)
+
+            if not save_result.success:
+                return f"❌ 儲存失敗：{save_result.error_message}"
+
+            # Build response
+            return self._build_audio_success_response(
+                content,
+                transcribed_text,
+                duration,
+                save_result.page_url
+            )
+
+        except Exception as e:
+            print(f"❌ [Telegram] Voice error: {e}")
+            return f"❌ 處理語音訊息時發生錯誤：{str(e)}"
+
+    async def _get_file_info(self, file_id: str) -> Optional[dict]:
+        """Get file info from Telegram API."""
+        try:
+            url = f"{self.api_base}/getFile"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(url, json={"file_id": file_id})
+                response.raise_for_status()
+                data = response.json()
+                if data.get("ok"):
+                    return data.get("result")
+        except Exception as e:
+            print(f"❌ [Telegram] getFile error: {e}")
+        return None
+
+    async def _download_file(self, url: str) -> Optional[bytes]:
+        """Download file from URL."""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response.content
+        except Exception as e:
+            print(f"❌ [Telegram] Download error: {e}")
+        return None
+
+    def _build_audio_success_response(
+        self,
+        content,
+        transcription: str,
+        duration: float,
+        page_url: Optional[str] = None
+    ) -> str:
+        """Build success response for audio processing."""
+        tags_str = ", ".join(content.tags) if content.tags else "無"
+        duration_str = f"{int(duration)}秒" if duration else "未知"
+
+        # Truncate transcription if too long
+        display_transcription = transcription
+        if len(transcription) > 200:
+            display_transcription = transcription[:200] + "..."
+
+        response = f"""✅ 語音訊息已儲存至 Notion！
+
+🎙️ 時長：{duration_str}
+
+📝 轉錄內容：
+{display_transcription}
+
+📌 標題：{content.title}
+
+📋 摘要：
+{content.summary}
+
+🏷️ 標籤：{tags_str}"""
 
         if page_url:
             response += f"\n\n📄 Notion 連結：{page_url}"
