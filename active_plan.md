@@ -78,23 +78,23 @@
 
 ## ⬜ Phase 8: 進階功能 (BACKLOG)
 
-### 🔥 Priority 1: SPA 網站支援
-- [ ] 使用 Jina Reader API 處理 JavaScript 渲染的網站
-- [ ] 解決 Next.js/React SPA 網站無法抓取問題
-
-### 📱 Priority 2: 更多社群平台
+### 📱 Priority 1: 更多社群平台
 - [ ] Instagram 貼文支援
 - [ ] X (Twitter) 貼文支援
 
-### 🎙️ Priority 3: 多媒體擴充
+### 🎧 Priority 2: 多媒體擴充
 - [ ] Podcast 音檔摘要 (Spotify/Apple Podcast)
 - [ ] PDF 文件摘要
 
-### ⚙️ Priority 4: 使用者體驗
+### ⚙️ Priority 3: 使用者體驗
 - [ ] 自訂摘要風格 (簡短/詳細/條列)
 - [ ] 多語言摘要支援
 - [ ] 搜尋已儲存內容
 - [ ] Notion 分類資料夾
+
+### 🛠️ Priority 4: 開發體驗
+- [ ] 単元測試完善
+- [ ] CI/CD 整合
 
 ---
 
@@ -109,7 +109,10 @@
 | 4 | 社群貼文支援 | ✅ 完成 | 6/6 |
 | 6 | YouTube 影片摘要 | ✅ 完成 | 7/7 |
 | 7 | Telegram Bot | ✅ 完成 | 5/5 |
+| 7.5 | SPA 網站支援 | ✅ 完成 | 2/2 |
+| 7.6 | 語音訊息支援 | ✅ 完成 | 4/4 |
 | 8 | 進階功能 | ⬜ Backlog | 0/10 |
+
 
 ---
 
@@ -128,9 +131,12 @@
 |------|------|
 | 📝 文字 | 純文字訊息 |
 | 🔗 網址 | 一般網頁 (SSR) |
-| 📺 YouTube | 影片連結 (含字幕摘要) |
+| 🌐 SPA | JavaScript 網站 (Jina Reader) ✅ NEW |
+| 🂬 YouTube | 影片連結 (含字幕摘要) |
 | 📱 社群 | Facebook / Threads |
 | 🖼️ 圖片 | Line 圖片 / 圖片 URL |
+| 🎙️ 語音 | 語音訊息 (Whisper) ✅ NEW |
+
 
 ---
 
@@ -138,8 +144,8 @@
 
 ```
 Project: Line Bot Content Saver
-Phase: 7 (Telegram Bot) ✅ COMPLETED
-Status: All core features completed, dual-platform bot running
+Phase: 7.6 (Voice Input) ✅ COMPLETED
+Status: All core features + voice input completed
 
 Production URLs:
 - Zeabur: https://line-bot9.zeabur.app
@@ -148,10 +154,10 @@ Production URLs:
 - Telegram Bot: @benson_inspiration_bot
 
 Key Changes (2026-02-04):
+- SPA Support: Jina Reader fallback for JavaScript websites
+- Voice Input: OpenAI Whisper for Line/Telegram
 - YouTube Support: Apify streamers/youtube-scraper + zh-TW subtitles
-- Telegram Bot: telegram_handler.py + /telegram/webhook
-- No message limits on Telegram
 
-Completed Phases: 1, 2, 2.5, 3, 4, 6, 7
+Completed Phases: 1, 2, 2.5, 3, 4, 6, 7, 7.5, 7.6
 Next Phase: 8 (Advanced Features - Backlog)
 ```

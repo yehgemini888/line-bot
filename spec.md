@@ -4,7 +4,7 @@
 一個多平台 Bot（Line / Telegram），接收使用者傳送的文字、網址、社群貼文、YouTube 影片或圖片，
 使用 AI 進行摘要分析，並儲存至 Notion 資料庫。
 
-## 2. Current Status: ✅ Phase 7 Completed
+## 2. Current Status: ✅ Phase 7.6 Completed
 
 ### 已完成功能
 - ✅ 文字訊息摘要
@@ -17,6 +17,8 @@
 - ✅ 多 AI 提供者支援 (Gemini / OpenAI / 自動切換)
 - ✅ **YouTube 影片摘要 (Apify + 繁中字幕)**
 - ✅ **Telegram Bot 整合 (無訊息限制)**
+- ✅ **SPA 網站支援 (Jina Reader)**
+- ✅ **語音訊息支援 (OpenAI Whisper)**
 
 ### 生產環境
 | 平台 | URL / ID |
@@ -27,7 +29,6 @@
 | Telegram Bot | @benson_inspiration_bot |
 
 ### 待開發功能 (Backlog)
-- ⬜ SPA 網站支援 (Jina Reader)
 - ⬜ 更多社群平台 (IG/Twitter)
 - ⬜ Podcast / PDF 摘要
 - ⬜ 自訂摘要風格
@@ -46,6 +47,8 @@
 | Notion         | notion-client                  | ✅ |
 | Social Scraper | apify-client                   | ✅ |
 | Cloud Storage  | Google Drive API (OAuth 2.0)   | ✅ |
+| SPA Scraper    | Jina Reader API                | ✅ |
+| Voice STT      | OpenAI Whisper API             | ✅ |
 | Deployment     | Zeabur                         | ✅ |
 
 ## 4. Architecture
@@ -106,7 +109,8 @@ class ContentType(Enum):
     URL = "url"
     SOCIAL = "social"
     IMAGE = "image"
-    YOUTUBE = "youtube"  # ✅ NEW
+    YOUTUBE = "youtube"
+    AUDIO = "audio"  # ✅ NEW
 
 @dataclass
 class Content:
