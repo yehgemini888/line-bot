@@ -104,6 +104,22 @@ class PromptTemplateManager:
             keywords=[],
             output_format="標準摘要"
         ),
+
+        "casual": PromptTemplate(
+            name="閒聊回應",
+            category="casual",
+            prompt="""你是一個友善、幽默的 AI 助手。
+用戶剛剛傳送了一則簡短的閒聊訊息、測試訊號、或無意義的語詞（如 "嗨"、"123"、"test"）。
+
+請只要：
+1. **確認收到**：簡單回應即可，不用長篇大論。
+2. **友善互動**：保持語氣輕鬆、幽默。
+3. **不要分析**：這不是文章，不需要摘要、主題分析或重點整理。
+
+請直接回應那句話，不用任何格式。""",
+            keywords=["嗨", "hello", "hi", "你好", "測試", "test", "123"],
+            output_format="閒聊模式"
+        ),
     }
 
     def __init__(self, notion_client=None, template_database_id: Optional[str] = None):

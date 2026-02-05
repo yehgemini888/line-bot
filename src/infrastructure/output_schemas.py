@@ -108,6 +108,26 @@ PRESET_SCHEMAS: Dict[str, dict] = {
             }
         },
         "required": ["標題", "概述", "優點", "缺點", "總結", "標籤"]
+    },
+
+    "閒聊模式": {
+        "type": "object",
+        "properties": {
+            "標題": {
+                "type": "string",
+                "description": "請填寫 '閒聊'"
+            },
+            "摘要": {
+                "type": "string",
+                "description": "直接回應使用者的內容，不用任何格式，像聊天一樣"
+            },
+            "標籤": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "請填寫 ['閒聊']"
+            }
+        },
+        "required": ["標題", "摘要", "標籤"]
     }
 }
 

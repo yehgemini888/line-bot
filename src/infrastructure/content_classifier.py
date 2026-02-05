@@ -119,6 +119,10 @@ class ContentClassifier:
                 categories = self.template_manager.get_all_categories()
             else:
                 categories = ["tech", "parenting", "finance", "lifestyle"]
+
+            # Add casual to categories if not present
+            if "casual" not in categories:
+                categories.append("casual")
             
             # Build category descriptions for AI
             category_list = ", ".join(categories)
@@ -129,6 +133,11 @@ class ContentClassifier:
             prompt = f"""請分析以下內容，判斷它最適合哪個類別。
 
 可用類別：{category_list}
+
+判斷規則：
+1. 如果內容是**打招呼**（如 "hi", "你好"）、**測試**（"test", "123"）、**極短語句**或**無意義語詞**，請務必選擇 **casual**。
+2. 如果是某些特定主題（科技、親子、財經...），請選擇對應類別。
+3. 如果都不符合，選擇 lifestyle。
 
 內容：
 {content_preview}

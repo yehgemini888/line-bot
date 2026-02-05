@@ -35,7 +35,7 @@ class NotionRepository:
         self.client = AsyncClient(auth=api_key)
         self.database_id = database_id
 
-    def _split_text(self, text: str, max_length: int = 1900) -> List[dict]:
+    def _split_text(self, text: str, max_length: int = 1000) -> List[dict]:
         """Split text into chunks of max_length for Notion's rich_text property."""
         if not text:
             return []
