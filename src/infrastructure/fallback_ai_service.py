@@ -71,3 +71,27 @@ class FallbackAIService:
 
         return await self.fallback.analyze_image(image_data, mime_type)
 
+    async def summarize_with_schema(
+        self,
+        content: str,
+        prompt: str,
+        schema: dict
+    ) -> dict:
+        """
+        使用 Schema 進行摘要。優先使用 Gemini，失敗時回退到 OpenAI。
+        
+        Args:
+            content: 要摘要的內容
+            prompt: 分析指示（Prompt 模板）
+            schema: 輸出結構定義（JSON Schema）
+            
+        Returns:
+            dict: 符合 Schema 結構的摘要結果
+        """
+        try:
+            result = await self.primary.summarize_with_schema(content, prompt, schema)
+            return result
+        except Exception as e:
+            print(f"⚠️ [Fallback] Gemini Structured Output 失敗: {e}, 切換到 OpenAI")
+        
+        return await self.fallback.summarize_with_schema(content, prompt, schema)

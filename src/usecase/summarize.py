@@ -81,6 +81,8 @@ class SummarizeResult:
     content: Content
     success: bool
     error_message: Optional[str] = None
+    template_used: Optional[str] = None  # Which prompt template was used
+    output_format_used: Optional[str] = None  # Which output format was used
 
 
 class SummarizeUseCase:
@@ -129,9 +131,24 @@ class SummarizeUseCase:
                 ai_service=ai_service,
                 template_manager=self.template_manager
             )
+            self._templates_loaded = False  # Flag to track if templates are loaded
         else:
             self.classifier = None
             self.template_manager = None
+            self._templates_loaded = True  # No need to load
+
+    async def _ensure_templates_loaded(self):
+        """
+        每次都從 Notion 重新載入模板。
+        確保 Notion 的變更能即時反映。
+        """
+        if self.template_manager:
+            print(f"🔄 [Summarize] Loading templates from Notion...")
+            try:
+                await self.template_manager.load_from_notion()
+                print(f"📋 [Summarize] Available categories: {self.template_manager.get_all_categories()}")
+            except Exception as e:
+                print(f"❌ [Summarize] Template loading failed: {e}")
 
     async def execute(
         self,
@@ -149,6 +166,9 @@ class SummarizeUseCase:
         Returns:
             SummarizeResult containing the processed Content entity
         """
+        # Step 0: Ensure templates are loaded from Notion
+        await self._ensure_templates_loaded()
+        
         # Step 1: Create content entity based on type
         if input_type == ContentType.URL:
             content = create_url_content(raw_input)
@@ -224,8 +244,11 @@ class SummarizeUseCase:
                 error_message="內容為空，無法進行摘要"
             )
 
-        # Step 3: Smart prompt selection (classify content and get template)
-        custom_prompt = None
+        # Step 3: Smart prompt selection (classify content and get template + schema)
+        template = None
+        schema = None
+        template_used = None
+        
         if self.enable_smart_prompt and self.classifier and self.template_manager:
             try:
                 # Classify the content
@@ -235,34 +258,93 @@ class SummarizeUseCase:
                     url=url_for_classify
                 )
                 
-                # Get the prompt template
-                custom_prompt = self.template_manager.get_prompt(classification.category)
-                print(f"🏷️ [Summarize] Using {classification.category} template")
+                # Get the prompt template AND schema
+                template, schema = await self.template_manager.get_template_with_schema(
+                    classification.category,
+                    text_to_summarize,  # 傳入內容以便動態生成 Schema
+                    self.ai_service
+                )
+                template_used = template.name if template else classification.category
+                print(f"🏷️ [Summarize] 使用模板: {classification.category}")
+                print(f"📋 [Summarize] 輸出格式: {template.output_format if template else 'default'}")
                 
             except Exception as e:
-                print(f"⚠️ [Summarize] Smart prompt failed, using default: {e}")
-                custom_prompt = None
+                print(f"⚠️ [Summarize] Smart prompt 失敗，使用預設: {e}")
+                template = None
+                schema = None
 
         # Step 4: Summarize with AI
-        summary_result = await self.ai_service.summarize(
-            content=text_to_summarize,
-            content_type=input_type.value,
-            custom_prompt=custom_prompt
-        )
-
-        if not summary_result.success:
+        try:
+            if template and schema:
+                # 使用新的 Structured Output API
+                print(f"🎯 [Summarize] 使用 Structured Output API")
+                result_dict = await self.ai_service.summarize_with_schema(
+                    content=text_to_summarize,
+                    prompt=template.prompt,
+                    schema=schema
+                )
+                
+                # 從結果中提取標準欄位
+                # Schema 使用繁體中文欄位名稱
+                result_title = result_dict.get("標題", result_dict.get("title", "未能取得標題"))
+                result_tags = result_dict.get("標籤", result_dict.get("tags", []))
+                
+                # 摘要欄位可能是 摘要, summary, description, 或其他
+                # 優先順序：摘要 > summary > description > 其他欄位組合
+                if "摘要" in result_dict:
+                    result_summary = result_dict["摘要"]
+                elif "summary" in result_dict:
+                    result_summary = result_dict["summary"]
+                elif "description" in result_dict:
+                    result_summary = result_dict["description"]
+                else:
+                    # 將所有非 標題/標籤 的欄位組合成摘要
+                    summary_parts = []
+                    for key, value in result_dict.items():
+                        if key in ["標題", "標籤", "title", "tags"]:
+                            continue
+                        if isinstance(value, list):
+                            summary_parts.append(f"**{key}**:\n" + "\n".join(f"- {item}" for item in value))
+                        elif isinstance(value, str):
+                            summary_parts.append(f"**{key}**: {value}")
+                    result_summary = "\n\n".join(summary_parts) if summary_parts else str(result_dict)
+                
+            else:
+                # 回退到舊的 summarize 方法
+                print(f"⚠️ [Summarize] 回退到傳統摘要方法")
+                summary_result = await self.ai_service.summarize(
+                    content=text_to_summarize,
+                    content_type=input_type.value,
+                    custom_prompt=template.prompt if template else None
+                )
+                
+                if not summary_result.success:
+                    return SummarizeResult(
+                        content=content,
+                        success=False,
+                        error_message=f"AI 摘要失敗: {summary_result.error_message}"
+                    )
+                
+                result_title = summary_result.title
+                result_summary = summary_result.summary
+                result_tags = summary_result.tags
+                
+        except Exception as e:
+            print(f"❌ [Summarize] AI 摘要失敗: {e}")
             return SummarizeResult(
                 content=content,
                 success=False,
-                error_message=f"AI 摘要失敗: {summary_result.error_message}"
+                error_message=f"AI 摘要失敗: {str(e)}"
             )
 
         # Step 5: Update content entity with AI results
-        content.title = summary_result.title
-        content.summary = summary_result.summary
-        content.tags = summary_result.tags
+        content.title = result_title
+        content.summary = result_summary
+        content.tags = result_tags
 
         return SummarizeResult(
             content=content,
-            success=True
+            success=True,
+            template_used=template_used,
+            output_format_used=template.output_format if template else None
         )

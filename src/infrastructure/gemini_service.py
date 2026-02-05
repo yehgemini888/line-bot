@@ -105,6 +105,77 @@ class GeminiService:
             print(f"❌ [Gemini] generate_simple error: {e}")
             return ""
 
+    async def summarize_with_schema(
+        self,
+        content: str,
+        prompt: str,
+        schema: dict
+    ) -> dict:
+        """
+        使用 Structured Output API 進行摘要。
+        
+        AI 會根據提供的 JSON Schema 回傳結構化的 JSON 輸出，
+        確保輸出格式一致且可靠。
+        
+        Args:
+            content: 要摘要的內容
+            prompt: 分析指示（Prompt 模板）
+            schema: 輸出結構定義（JSON Schema）
+            
+        Returns:
+            dict: 符合 Schema 結構的摘要結果
+            
+        Raises:
+            Exception: 當 API 呼叫失敗或 JSON 解析失敗時
+        """
+        import json
+        
+        # 截斷過長的內容
+        max_length = 10000
+        if len(content) > max_length:
+            content = content[:max_length] + "...(已截斷)"
+        
+        # 組合完整的 Prompt，明確要求使用繁體中文
+        full_prompt = f"""【重要】請全程使用繁體中文回覆，不要使用其他語言。
+
+{prompt}
+
+---
+
+以下是需要分析的內容：
+
+{content}
+
+---
+
+請根據上述指示進行分析。記得全部使用繁體中文。"""
+        
+        try:
+            print(f"🎯 [Gemini] 使用 Structured Output API")
+            print(f"📋 [Gemini] Schema 欄位: {list(schema.get('properties', {}).keys())}")
+            
+            # 使用 Structured Output API
+            response = await self.model.generate_content_async(
+                full_prompt,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    response_schema=schema
+                )
+            )
+            
+            # 解析 JSON 回應
+            result = json.loads(response.text)
+            print(f"✅ [Gemini] Structured Output 成功")
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            print(f"❌ [Gemini] JSON 解析失敗: {e}")
+            raise
+        except Exception as e:
+            print(f"❌ [Gemini] Structured Output 失敗: {e}")
+            raise
+
     def _build_prompt(
         self, 
         content: str, 
@@ -119,6 +190,7 @@ class GeminiService:
 
         # Use custom prompt if provided
         if custom_prompt:
+            print(f"🎯 [Gemini] Using custom prompt: {custom_prompt[:50]}...")
             return f"""{custom_prompt}
 
 ---
@@ -152,7 +224,7 @@ class GeminiService:
 
 標題：[用一句話概括主題，15字以內]
 
-摘要：[用3-5句話總結重點內容]
+摘要：[請根據自訂 Prompt 的要求撰寫摘要內容]
 
 標籤：[提供3-5個相關標籤，用逗號分隔]
 """

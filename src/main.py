@@ -210,13 +210,18 @@ def get_telegram_handler() -> TelegramHandler:
         if OPENAI_API_KEY:
             whisper_service = WhisperService(api_key=OPENAI_API_KEY)
 
-        # UseCases
+        # UseCases (with Notion client for template loading)
         summarize_usecase = SummarizeUseCase(
             ai_service=ai_service,
             web_scraper=web_scraper,
-            social_scraper=apify_scraper
+            social_scraper=apify_scraper,
+            notion_client=notion_repo.client if NOTION_TEMPLATE_DATABASE_ID else None,
+            template_database_id=NOTION_TEMPLATE_DATABASE_ID
         )
         save_usecase = SaveToNotionUseCase(repository=notion_repo)
+        
+        # Get ProcessImageUseCase
+        process_image_usecase = get_process_image_usecase()
 
         # Telegram Handler
         _telegram_handler = TelegramHandler(
@@ -227,7 +232,8 @@ def get_telegram_handler() -> TelegramHandler:
             image_detector=image_detector,
             youtube_service=youtube_service,
             ai_service=ai_service,
-            whisper_service=whisper_service
+            whisper_service=whisper_service,
+            process_image_usecase=process_image_usecase
         )
     return _telegram_handler
 
@@ -286,6 +292,10 @@ async def lifespan(app: FastAPI):
     validate_config()
     print("🚀 Line Bot Content Saver started!")
     print(f"📦 Notion Database ID: {NOTION_DATABASE_ID[:8]}...")
+    if NOTION_TEMPLATE_DATABASE_ID:
+        print(f"📋 Notion Template DB: {NOTION_TEMPLATE_DATABASE_ID[:8]}...")
+    else:
+        print("⚠️ Notion Template DB: NOT CONFIGURED (using defaults)")
     print(f"🤖 AI Provider: {AI_PROVIDER.upper()}")
 
     # Check if image processing is configured

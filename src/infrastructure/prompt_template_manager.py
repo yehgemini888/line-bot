@@ -3,10 +3,20 @@ Infrastructure Layer: Prompt Template Manager
 
 Manages prompt templates stored in Notion for different content categories.
 Supports fully dynamic, user-customizable templates with keyword matching.
+Now includes output schema support for Structured Output API.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+from src.infrastructure.output_schemas import (
+    PRESET_SCHEMAS, 
+    DEFAULT_SCHEMA, 
+    get_preset_schema, 
+    is_preset_format
+)
+from src.infrastructure.schema_cache import SchemaCache
+from src.infrastructure.schema_generator import SchemaGenerator
 
 
 @dataclass
@@ -17,6 +27,7 @@ class PromptTemplate:
     prompt: str
     keywords: List[str] = field(default_factory=list)
     active: bool = True
+    output_format: str = "標準摘要"  # 新增：輸出格式（預設或自動推斷）
 
 
 class PromptTemplateManager:
@@ -24,6 +35,7 @@ class PromptTemplateManager:
     Manages prompt templates for different content categories.
     
     Supports dynamic categories from Notion with keyword matching.
+    Now includes output schema support for Structured Output API.
     """
 
     # Default prompt templates (fallback when Notion not configured)
@@ -40,7 +52,8 @@ class PromptTemplateManager:
 4. **關鍵重點**：最重要的 3 個 takeaway
 
 請用繁體中文回答，風格專業但易懂。""",
-            keywords=["github", "api", "程式", "開源", "軟體", "AI", "python", "javascript"]
+            keywords=["github", "api", "程式", "開源", "軟體", "AI", "python", "javascript"],
+            output_format="自動推斷"
         ),
         
         "parenting": PromptTemplate(
@@ -55,7 +68,8 @@ class PromptTemplateManager:
 4. **暖心小語**：給爸媽的一句鼓勵
 
 請用繁體中文回答，語氣溫和、正向。""",
-            keywords=["育兒", "寶寶", "親子", "教養", "小孩", "兒童", "媽媽", "爸爸"]
+            keywords=["育兒", "寶寶", "親子", "教養", "小孩", "兒童", "媽媽", "爸爸"],
+            output_format="自動推斷"
         ),
         
         "finance": PromptTemplate(
@@ -72,7 +86,8 @@ class PromptTemplateManager:
 ⚠️ 免責聲明：此為資訊分享，非投資建議。
 
 請用繁體中文回答，風格專業、謹慎。""",
-            keywords=["投資", "理財", "股票", "ETF", "基金", "財經", "存股"]
+            keywords=["投資", "理財", "股票", "ETF", "基金", "財經", "存股"],
+            output_format="自動推斷"
         ),
         
         "lifestyle": PromptTemplate(
@@ -86,7 +101,8 @@ class PromptTemplateManager:
 3. **結論/洞見**：作者想傳達的核心訊息
 
 請用繁體中文回答，簡潔清晰。""",
-            keywords=[]
+            keywords=[],
+            output_format="標準摘要"
         ),
     }
 
@@ -102,6 +118,10 @@ class PromptTemplateManager:
         self.template_database_id = template_database_id
         self._templates: Dict[str, PromptTemplate] = dict(self.DEFAULT_TEMPLATES)
         self._loaded_from_notion = False
+        
+        # 新增：Schema 相關元件
+        self._schema_cache = SchemaCache()
+        self._schema_generator = SchemaGenerator()
 
     def get_template(self, category: str) -> PromptTemplate:
         """
@@ -127,6 +147,53 @@ class PromptTemplateManager:
         """
         template = self.get_template(category)
         return template.prompt if template else ""
+
+    async def get_template_with_schema(
+        self, 
+        category: str, 
+        content: str,
+        ai_service
+    ) -> Tuple[PromptTemplate, dict]:
+        """
+        取得模板及其對應的輸出結構。
+        
+        根據模板的 output_format 設定：
+        - 如果是預設格式（如「標準摘要」），使用預定義的 Schema
+        - 如果是「自動推斷」，AI 會以指定角色分析內容，決定最適合的 Schema
+        
+        Args:
+            category: 內容分類
+            content: 要分析的內容（用於自動推斷 Schema）
+            ai_service: AI 服務（用於自動推斷時生成 Schema）
+            
+        Returns:
+            Tuple[PromptTemplate, dict]: 模板和對應的 JSON Schema
+        """
+        template = self.get_template(category)
+        
+        if not template:
+            print(f"⚠️ [Templates] 找不到分類 '{category}'，使用預設")
+            template = self._templates.get("lifestyle")
+            return template, DEFAULT_SCHEMA
+        
+        output_format = template.output_format
+        
+        # 情況 1：使用預設格式
+        if is_preset_format(output_format):
+            schema = get_preset_schema(output_format)
+            print(f"📋 [Templates] 使用預設格式: {output_format}")
+            return template, schema
+        
+        # 情況 2：自動推斷 - 每次都根據內容動態生成
+        # 注意：不使用快取，因為每篇內容可能需要不同的結構
+        print(f"🔄 [Templates] 自動推斷 Schema: {category}")
+        schema = await self._schema_generator.generate_schema(
+            role_prompt=template.prompt,
+            content=content,
+            ai_service=ai_service
+        )
+        
+        return template, schema
 
     def list_templates(self) -> List[PromptTemplate]:
         """List all available templates."""
@@ -190,8 +257,8 @@ class PromptTemplateManager:
         try:
             print(f"📋 [Templates] Loading from Notion: {self.template_database_id[:8]}...")
             
-            # Query the database
-            response = self.notion_client.databases.query(
+            # Query the database (async)
+            response = await self.notion_client.databases.query(
                 database_id=self.template_database_id,
                 filter={
                     "property": "Active",
@@ -205,25 +272,34 @@ class PromptTemplateManager:
                     props = page.get("properties", {})
                     
                     # Extract name
-                    name_prop = props.get("Name", {}).get("title", [])
-                    name = name_prop[0]["text"]["content"] if name_prop else "Unnamed"
+                    name_prop = props.get("Name") or {}
+                    name_titles = name_prop.get("title", [])
+                    name = name_titles[0]["text"]["content"] if name_titles else "Unnamed"
                     
                     # Extract category (now a free-form string)
-                    category_prop = props.get("Category", {}).get("select", {})
-                    category = category_prop.get("name", "lifestyle").lower()
+                    category_prop = props.get("Category") or {}
+                    category_select = category_prop.get("select") or {}
+                    category = category_select.get("name", "lifestyle").lower()
                     
                     # Extract prompt
-                    prompt_prop = props.get("Prompt", {}).get("rich_text", [])
-                    prompt = prompt_prop[0]["text"]["content"] if prompt_prop else ""
+                    prompt_prop = props.get("Prompt") or {}
+                    prompt_texts = prompt_prop.get("rich_text", [])
+                    prompt = prompt_texts[0]["text"]["content"] if prompt_texts else ""
                     
                     if not prompt:
                         print(f"⚠️ [Templates] Skipping '{name}': empty prompt")
                         continue
                     
                     # Extract keywords
-                    keywords_prop = props.get("Keywords", {}).get("rich_text", [])
-                    keywords_str = keywords_prop[0]["text"]["content"] if keywords_prop else ""
+                    keywords_prop = props.get("Keywords") or {}
+                    keywords_texts = keywords_prop.get("rich_text", [])
+                    keywords_str = keywords_texts[0]["text"]["content"] if keywords_texts else ""
                     keywords = [k.strip().lower() for k in keywords_str.split(",") if k.strip()]
+                    
+                    # 新增：Extract output format
+                    output_format_prop = props.get("Output Format") or {}
+                    output_format_select = output_format_prop.get("select") or {}
+                    output_format = output_format_select.get("name", "標準摘要")
                     
                     # Create template
                     template = PromptTemplate(
@@ -231,13 +307,14 @@ class PromptTemplateManager:
                         category=category,
                         prompt=prompt,
                         keywords=keywords,
-                        active=True
+                        active=True,
+                        output_format=output_format
                     )
                     
                     # Store it (overwrites defaults if same category)
                     self._templates[category] = template
                     loaded_count += 1
-                    print(f"✅ [Templates] Loaded: {name} → {category} (keywords: {keywords})")
+                    print(f"✅ [Templates] Loaded: {name} → {category} (format: {output_format})")
                     
                 except Exception as e:
                     print(f"⚠️ [Templates] Error parsing template: {e}")
@@ -249,3 +326,7 @@ class PromptTemplateManager:
             
         except Exception as e:
             print(f"❌ [Templates] Failed to load from Notion: {e}")
+    
+    def clear_schema_cache(self) -> None:
+        """清除所有 Schema 快取"""
+        self._schema_cache.clear()

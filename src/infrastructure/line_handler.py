@@ -152,8 +152,13 @@ class LineMessageHandler:
         if not save_result.success:
             return f"❌ 儲存失敗：{save_result.error_message}"
 
-        # Build success response
-        response = self._build_success_response(content, save_result.page_url)
+        # Build success response with template info
+        response = self._build_success_response(
+            content, 
+            save_result.page_url,
+            summarize_result.template_used,
+            summarize_result.output_format_used
+        )
         return response
 
     def _extract_url(self, text: str) -> Optional[str]:
@@ -228,14 +233,28 @@ class LineMessageHandler:
         if not save_result.success:
             return f"❌ 儲存失敗：{save_result.error_message}"
 
-        return self._build_success_response(content, save_result.page_url)
+        return self._build_success_response(
+            content, 
+            save_result.page_url,
+            summarize_result.template_used,
+            summarize_result.output_format_used
+        )
 
-    def _build_success_response(self, content, page_url: str = None) -> str:
+    def _build_success_response(
+        self, 
+        content, 
+        page_url: str = None,
+        template_used: Optional[str] = None,
+        output_format_used: Optional[str] = None
+    ) -> str:
         """Build success response message."""
         tags_str = ", ".join(content.tags) if content.tags else "無"
+        template_info = f"🧠 使用模板：{template_used}\n" if template_used else ""
+        format_info = f"📋 輸出格式：{output_format_used}\n" if output_format_used else ""
 
         response = f"""✅ 已儲存至 Notion！
 
+{template_info}{format_info}
 📌 標題：{content.title}
 
 📝 摘要：

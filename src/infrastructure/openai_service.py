@@ -127,6 +127,89 @@ class OpenAIService:
             print(f"❌ [OpenAI] generate_simple error: {e}")
             return ""
 
+    async def summarize_with_schema(
+        self,
+        content: str,
+        prompt: str,
+        schema: dict
+    ) -> dict:
+        """
+        使用 Structured Output API 進行摘要。
+        
+        AI 會根據提供的 JSON Schema 回傳結構化的 JSON 輸出，
+        確保輸出格式一致且可靠。
+        
+        Args:
+            content: 要摘要的內容
+            prompt: 分析指示（Prompt 模板）
+            schema: 輸出結構定義（JSON Schema）
+            
+        Returns:
+            dict: 符合 Schema 結構的摘要結果
+            
+        Raises:
+            Exception: 當 API 呼叫失敗或 JSON 解析失敗時
+        """
+        import json
+        
+        # 截斷過長的內容
+        max_length = 10000
+        if len(content) > max_length:
+            content = content[:max_length] + "...(已截斷)"
+        
+        # 組合完整的 Prompt
+        full_prompt = f"""{prompt}
+
+---
+
+以下是需要分析的內容：
+
+{content}
+
+---
+
+請根據上述指示進行分析。"""
+        
+        try:
+            print(f"🎯 [OpenAI] 使用 Structured Output API")
+            print(f"📋 [OpenAI] Schema 欄位: {list(schema.get('properties', {}).keys())}")
+            
+            # OpenAI 需要 additionalProperties: false
+            openai_schema = dict(schema)
+            openai_schema["additionalProperties"] = False
+            
+            # 使用 Structured Output API
+            response = await self.client.chat.completions.create(
+                model=self.text_model,
+                messages=[
+                    {"role": "system", "content": "你是一個專業的內容分析助手，請用繁體中文回覆。"},
+                    {"role": "user", "content": full_prompt}
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "summary_response",
+                        "strict": True,
+                        "schema": openai_schema
+                    }
+                },
+                temperature=0.7,
+                max_tokens=2000
+            )
+            
+            # 解析 JSON 回應
+            result = json.loads(response.choices[0].message.content)
+            print(f"✅ [OpenAI] Structured Output 成功")
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            print(f"❌ [OpenAI] JSON 解析失敗: {e}")
+            raise
+        except Exception as e:
+            print(f"❌ [OpenAI] Structured Output 失敗: {e}")
+            raise
+
     async def analyze_image(
         self,
         image_data: bytes,
@@ -202,6 +285,7 @@ class OpenAIService:
 
         # Use custom prompt if provided
         if custom_prompt:
+            print(f"🎯 [OpenAI] Using custom prompt: {custom_prompt[:50]}...")
             return f"""{custom_prompt}
 
 ---
@@ -217,7 +301,7 @@ class OpenAIService:
 
 標題：[用一句話概括主題，15字以內]
 
-摘要：[根據上述指示產生的摘要內容]
+摘要：[請根據自訂 Prompt 的要求撰寫摘要內容]
 
 標籤：[提供3-5個相關標籤，用逗號分隔]
 """

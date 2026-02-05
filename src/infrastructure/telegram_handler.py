@@ -51,7 +51,8 @@ class TelegramHandler:
         image_detector: Optional[ImageDetector] = None,
         youtube_service=None,
         ai_service=None,
-        whisper_service=None
+        whisper_service=None,
+        process_image_usecase=None
     ):
         """
         Initialize the handler.
@@ -64,6 +65,8 @@ class TelegramHandler:
             image_detector: Detector for image URLs
             youtube_service: Service for fetching YouTube video info
             ai_service: AI service for summarization
+            whisper_service: Service for speech-to-text
+            process_image_usecase: Use case for processing images (upload to Drive + AI analysis)
         """
         self.bot_token = bot_token
         self.api_base = self.API_BASE.format(token=bot_token)
@@ -74,6 +77,7 @@ class TelegramHandler:
         self.youtube_service = youtube_service
         self.ai_service = ai_service
         self.whisper_service = whisper_service
+        self.process_image_usecase = process_image_usecase
 
     def parse_update(self, update: dict) -> Optional[TelegramUpdate]:
         """Parse Telegram update JSON to TelegramUpdate object."""
@@ -141,6 +145,15 @@ class TelegramHandler:
             await self.send_message(chat_id, response)
             return
 
+        # Check for photo message
+        photo = message.get("photo")
+        if photo:
+            print(f"📸 [Telegram] Photo from @{username}")
+            await self.send_message(chat_id, "收到圖片！正在分析中... 🖼️")
+            response = await self._handle_photo_message(photo, message.get("caption", ""), chat_id)
+            await self.send_message(chat_id, response)
+            return
+
         # Check for text message
         parsed = self.parse_update(update)
         if not parsed:
@@ -199,7 +212,12 @@ class TelegramHandler:
             return f"❌ 儲存失敗：{save_result.error_message}"
 
         # Build response
-        return self._build_success_response(content, save_result.page_url)
+        return self._build_success_response(
+            content, 
+            save_result.page_url, 
+            summarize_result.template_used,
+            summarize_result.output_format_used
+        )
 
     def _extract_url(self, text: str) -> Optional[str]:
         """Extract URL from text."""
@@ -287,12 +305,21 @@ class TelegramHandler:
         # Build response
         return self._build_youtube_response(content, video_info, has_captions, save_result.page_url)
 
-    def _build_success_response(self, content: Content, page_url: Optional[str] = None) -> str:
+    def _build_success_response(
+        self, 
+        content: Content, 
+        page_url: Optional[str] = None, 
+        template_used: Optional[str] = None,
+        output_format_used: Optional[str] = None
+    ) -> str:
         """Build success response message."""
         tags_str = ", ".join(content.tags) if content.tags else "無"
+        template_info = f"🧠 使用模板：{template_used}\n" if template_used else ""
+        format_info = f"📋 輸出格式：{output_format_used}\n" if output_format_used else ""
 
         response = f"""✅ 已儲存至 Notion！
 
+{template_info}{format_info}
 📌 標題：{content.title}
 
 📝 摘要：
@@ -474,6 +501,172 @@ class TelegramHandler:
 📌 標題：{content.title}
 
 📋 摘要：
+{content.summary}
+
+🏷️ 標籤：{tags_str}"""
+
+        if page_url:
+            response += f"\n\n📄 Notion 連結：{page_url}"
+
+        return response
+
+    async def _handle_photo_message(self, photo: list, caption: str, chat_id: int) -> str:
+        """
+        Handle photo message with AI image analysis and Google Drive upload.
+
+        Args:
+            photo: Photo array from Telegram (multiple sizes)
+            caption: Optional caption text
+            chat_id: Chat ID for sending messages
+
+        Returns:
+            Response message string
+        """
+        import uuid
+
+        # Check if process_image_usecase is available (preferred method with Drive upload)
+        if self.process_image_usecase:
+            try:
+                # Telegram sends multiple photo sizes, get the largest one
+                largest_photo = photo[-1] if photo else None
+                if not largest_photo:
+                    return "❌ 無法取得圖片"
+
+                file_id = largest_photo.get("file_id")
+                print(f"📸 [Telegram] Photo file_id: {file_id}")
+
+                # Get file path from Telegram
+                file_info = await self._get_file_info(file_id)
+                if not file_info:
+                    return "❌ 無法取得圖片資訊"
+
+                file_path = file_info.get("file_path")
+                if not file_path:
+                    return "❌ 無法取得圖片路徑"
+
+                # Download file
+                file_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+                image_bytes = await self._download_file(file_url)
+                if not image_bytes:
+                    return "❌ 無法下載圖片"
+
+                print(f"📸 [Telegram] Downloaded {len(image_bytes)} bytes")
+
+                # Determine MIME type from file extension
+                mime_type = "image/jpeg"
+                ext = ".jpg"
+                if file_path.endswith(".png"):
+                    mime_type = "image/png"
+                    ext = ".png"
+                elif file_path.endswith(".gif"):
+                    mime_type = "image/gif"
+                    ext = ".gif"
+                elif file_path.endswith(".webp"):
+                    mime_type = "image/webp"
+                    ext = ".webp"
+
+                # Generate filename
+                filename = f"telegram_photo_{uuid.uuid4().hex[:8]}{ext}"
+
+                # Use ProcessImageUseCase (uploads to Drive + AI analysis + saves to Notion)
+                result = await self.process_image_usecase.execute(
+                    image_data=image_bytes,
+                    filename=filename,
+                    mime_type=mime_type
+                )
+
+                if not result.success:
+                    return f"❌ 處理失敗：{result.error_message}"
+
+                # Update content with caption if provided
+                content = result.content
+                if caption and content:
+                    content.summary = f"📝 用戶說明：{caption}\n\n🖼️ 圖片分析：\n{content.image_description}"
+
+                # Build response
+                return self._build_photo_success_response(
+                    content,
+                    caption,
+                    result.page_url
+                )
+
+            except Exception as e:
+                print(f"❌ [Telegram] Photo error: {e}")
+                return f"❌ 處理圖片時發生錯誤：{str(e)}"
+
+        # Fallback: Use ai_service directly (no Drive upload)
+        elif self.ai_service:
+            return await self._handle_photo_message_fallback(photo, caption, chat_id)
+
+        else:
+            return "❌ 圖片處理功能未啟用"
+
+    async def _handle_photo_message_fallback(self, photo: list, caption: str, chat_id: int) -> str:
+        """Fallback photo handling without Google Drive upload."""
+        from src.domain.content import create_image_content
+
+        try:
+            largest_photo = photo[-1] if photo else None
+            if not largest_photo:
+                return "❌ 無法取得圖片"
+
+            file_id = largest_photo.get("file_id")
+            file_info = await self._get_file_info(file_id)
+            if not file_info:
+                return "❌ 無法取得圖片資訊"
+
+            file_path = file_info.get("file_path")
+            if not file_path:
+                return "❌ 無法取得圖片路徑"
+
+            file_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+            image_bytes = await self._download_file(file_url)
+            if not image_bytes:
+                return "❌ 無法下載圖片"
+
+            mime_type = "image/jpeg"
+            if file_path.endswith(".png"):
+                mime_type = "image/png"
+
+            analysis_result = await self.ai_service.analyze_image(image_bytes, mime_type)
+            if not analysis_result.success:
+                return f"❌ 圖片分析失敗：{analysis_result.error_message}"
+
+            content = create_image_content(
+                image_url="",  # No Drive URL in fallback mode
+                image_description=analysis_result.description,
+                title=analysis_result.title,
+                tags=analysis_result.tags
+            )
+
+            if caption:
+                content.summary = f"📝 用戶說明：{caption}\n\n🖼️ 圖片分析：\n{analysis_result.description}"
+
+            save_result = await self.save_usecase.execute(content)
+            if not save_result.success:
+                return f"❌ 儲存失敗：{save_result.error_message}"
+
+            return self._build_photo_success_response(content, caption, save_result.page_url)
+
+        except Exception as e:
+            print(f"❌ [Telegram] Photo fallback error: {e}")
+            return f"❌ 處理圖片時發生錯誤：{str(e)}"
+
+    def _build_photo_success_response(
+        self,
+        content,
+        caption: str,
+        page_url: Optional[str] = None
+    ) -> str:
+        """Build success response for photo processing."""
+        tags_str = ", ".join(content.tags) if content.tags else "無"
+        caption_info = f"\n📝 用戶說明：{caption}" if caption else ""
+
+        response = f"""✅ 圖片已儲存至 Notion！
+{caption_info}
+📌 標題：{content.title}
+
+🖼️ 圖片描述：
 {content.summary}
 
 🏷️ 標籤：{tags_str}"""

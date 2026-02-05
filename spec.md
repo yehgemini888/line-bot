@@ -4,7 +4,7 @@
 一個多平台 Bot（Line / Telegram），接收使用者傳送的文字、網址、社群貼文、YouTube 影片或圖片，
 使用 AI 進行摘要分析，並儲存至 Notion 資料庫。
 
-## 2. Current Status: ✅ Phase 7.6 Completed
+## 2. Current Status: ✅ Phase 7.7 Completed
 
 ### 已完成功能
 - ✅ 文字訊息摘要
@@ -12,13 +12,15 @@
 - ✅ AI 自動產生標題、摘要、標籤
 - ✅ 儲存至 Notion Database
 - ✅ 社群貼文偵測與摘要 (Facebook / Threads)
-- ✅ 圖片訊息處理 (Line 圖片 / 圖片 URL)
+- ✅ 圖片訊息處理 (Line / Telegram / 圖片 URL)
 - ✅ 圖片上傳至 Google Drive (OAuth 2.0)
 - ✅ 多 AI 提供者支援 (Gemini / OpenAI / 自動切換)
 - ✅ **YouTube 影片摘要 (Apify + 繁中字幕)**
-- ✅ **Telegram Bot 整合 (無訊息限制)**
+- ✅ **Telegram Bot 整合 (無訊息限制 + 圖片上傳 Drive)**
 - ✅ **SPA 網站支援 (Jina Reader)**
 - ✅ **語音訊息支援 (OpenAI Whisper)**
+- ✅ **Prompt Template System (Notion 管理)**
+- ✅ **繁體中文 Schema 優化 (動態生成)**
 
 ### 生產環境
 | 平台 | URL / ID |
