@@ -525,7 +525,7 @@ class TelegramHandler:
                 filename = f"telegram_photo_{uuid.uuid4().hex[:8]}{ext}"
 
                 # Step 1: Upload to Google Drive first
-                upload_result = await self.drive_service.upload_image(
+                upload_result = self.drive_service.upload_image(
                     image_data=image_bytes,
                     filename=filename,
                     mime_type=mime_type

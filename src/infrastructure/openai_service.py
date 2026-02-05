@@ -217,7 +217,8 @@ class OpenAIService:
     async def analyze_image(
         self,
         image_data: bytes,
-        mime_type: str = "image/jpeg"
+        mime_type: str = "image/jpeg",
+        prompt: str = None
     ) -> ImageAnalysisResult:
         """
         Analyze an image using OpenAI Vision.
@@ -225,6 +226,7 @@ class OpenAIService:
         Args:
             image_data: Image binary data
             mime_type: MIME type of the image
+            prompt: Optional custom prompt for analysis
 
         Returns:
             ImageAnalysisResult with title, description, and tags
@@ -233,7 +235,7 @@ class OpenAIService:
             # Encode image to base64
             image_base64 = base64.b64encode(image_data).decode('utf-8')
 
-            prompt = self._build_image_prompt()
+            prompt = self._build_image_prompt(prompt)
 
             response = await self.client.chat.completions.create(
                 model=self.vision_model,
@@ -328,8 +330,20 @@ class OpenAIService:
 標籤：[提供3-5個相關標籤，用逗號分隔]
 """
 
-    def _build_image_prompt(self) -> str:
+    def _build_image_prompt(self, custom_prompt: str = None) -> str:
         """Build the image analysis prompt."""
+        if custom_prompt:
+            return f"""{custom_prompt}
+
+請嚴格按照以下格式回覆（不要加入其他內容）：
+
+標題：[用一句話描述圖片內容，15字以內]
+
+描述：[用3-5句話詳細描述圖片中的內容、場景、物體、人物、文字等]
+
+標籤：[提供3-5個相關標籤，用逗號分隔，例如：風景、美食、寵物、科技等]
+"""
+
         return """請分析這張圖片，並以繁體中文回覆。
 
 請嚴格按照以下格式回覆（不要加入其他內容）：

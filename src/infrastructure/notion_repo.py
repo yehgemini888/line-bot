@@ -35,12 +35,13 @@ class NotionRepository:
         self.client = AsyncClient(auth=api_key)
         self.database_id = database_id
 
-    def _split_text(self, text: str, max_length: int = 2000) -> List[dict]:
+    def _split_text(self, text: str, max_length: int = 1900) -> List[dict]:
         """Split text into chunks of max_length for Notion's rich_text property."""
         if not text:
             return []
         
         # Ensure we don't exceed 2000 chars (Notion API limit)
+        # Using 1900 to be safe from potential character counting differences
         return [
             {"text": {"content": text[i : i + max_length]}}
             for i in range(0, len(text), max_length)
@@ -85,7 +86,7 @@ class NotionRepository:
             # Build properties
             properties = {
                 "Title": {
-                    "title": [{"text": {"content": title[:2000]}}] # Title also has 2000 limit
+                    "title": [{"text": {"content": title[:1900]}}] # Title also has 2000 limit, use 1900 for safety
                 },
                 "Summary": {
                     "rich_text": self._split_text(summary)

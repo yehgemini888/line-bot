@@ -56,20 +56,21 @@ class FallbackAIService:
     async def analyze_image(
         self,
         image_data: bytes,
-        mime_type: str = "image/jpeg"
+        mime_type: str = "image/jpeg",
+        prompt: str = None
     ) -> ImageAnalysisResult:
         """
         Analyze an image. Tries Gemini first, falls back to OpenAI.
         """
         try:
-            result = await self.primary.analyze_image(image_data, mime_type)
+            result = await self.primary.analyze_image(image_data, mime_type, prompt)
             if result.success:
                 return result
             print(f"⚠️ [Fallback] Gemini Vision returned failure: {result.error_message}, switching to OpenAI")
         except Exception as e:
             print(f"⚠️ [Fallback] Gemini Vision raised exception: {e}, switching to OpenAI")
 
-        return await self.fallback.analyze_image(image_data, mime_type)
+        return await self.fallback.analyze_image(image_data, mime_type, prompt)
 
     async def summarize_with_schema(
         self,
