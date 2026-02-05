@@ -154,14 +154,30 @@ class SummarizeUseCase:
         self,
         raw_input: str,
         input_type: ContentType,
-        social_platform: Optional[SocialPlatform] = None
+        social_platform: Optional[SocialPlatform] = None,
+        # Image-specific parameters
+        image_data: Optional[bytes] = None,
+        image_mime_type: Optional[str] = None,
+        image_url: Optional[str] = None,  # For already-uploaded images
+        # YouTube-specific parameters
+        youtube_info: Optional[dict] = None,
+        # Audio-specific parameters
+        audio_transcription: Optional[str] = None,
+        audio_duration: Optional[float] = None
     ) -> SummarizeResult:
         """
         Execute the summarize use case.
 
         Args:
             raw_input: The raw text or URL from user
-            input_type: ContentType.TEXT or ContentType.URL
+            input_type: ContentType (TEXT, URL, SOCIAL, IMAGE, YOUTUBE, AUDIO)
+            social_platform: Platform if SOCIAL type
+            image_data: Image binary data if IMAGE type
+            image_mime_type: Image MIME type if IMAGE type
+            image_url: Image URL (e.g., Drive link) if already uploaded
+            youtube_info: Dict with title, captions, description, channel, duration
+            audio_transcription: Transcribed text if AUDIO type
+            audio_duration: Audio duration in seconds if AUDIO type
 
         Returns:
             SummarizeResult containing the processed Content entity
@@ -232,9 +248,93 @@ class SummarizeUseCase:
             if meta_info:
                 text_to_summarize = f"{' | '.join(meta_info)}\n\n{text_to_summarize}"
 
+
+        elif input_type == ContentType.IMAGE:
+            # Image processing
+            from src.domain.content import create_image_content
+            
+            if not image_data and not image_url:
+                return SummarizeResult(
+                    content=create_image_content(image_url="", image_description=""),
+                    success=False,
+                    error_message="缺少圖片資料或 URL"
+                )
+            
+            # Create content entity
+            content = create_image_content(
+                image_url=image_url or "[Processing]",
+                image_description=None
+            )
+            
+            # For AI analysis, we'll use image_data
+            # The actual analysis will happen in Step 4
+            text_to_summarize = "[Image Analysis]"
+            print(f"🖼️ [Summarize] Processing image (has_data={image_data is not None}, has_url={image_url is not None})")
+
+        elif input_type == ContentType.YOUTUBE:
+            # YouTube processing
+            from src.domain.content import create_youtube_content
+            
+            if not youtube_info:
+                return SummarizeResult(
+                    content=create_youtube_content(url=raw_input),
+                    success=False,
+                    error_message="缺少 YouTube 影片資訊"
+                )
+            
+            # Create content entity with metadata
+            content = create_youtube_content(
+                url=raw_input,
+                title=youtube_info.get("title"),
+                channel_name=youtube_info.get("channel"),
+                video_duration=youtube_info.get("duration")
+            )
+            
+            # Prepare text for summarization
+            has_captions = youtube_info.get("captions") and len(youtube_info.get("captions", "")) > 0
+            
+            if has_captions:
+                text_to_summarize = f"""影片標題：{youtube_info.get('title')}
+頻道：{youtube_info.get('channel')}
+時長：{youtube_info.get('duration')}
+
+字幕內容：
+{youtube_info.get('captions')[:15000]}"""
+            else:
+                text_to_summarize = f"""影片標題：{youtube_info.get('title')}
+頻道：{youtube_info.get('channel')}
+時長：{youtube_info.get('duration')}
+
+影片描述：
+{youtube_info.get('description', '(無描述)')[:3000]}"""
+            
+            print(f"🎬 [Summarize] Processing YouTube (has_captions={has_captions})")
+
+        elif input_type == ContentType.AUDIO:
+            # Audio processing
+            from src.domain.content import create_audio_content
+            
+            if not audio_transcription:
+                return SummarizeResult(
+                    content=create_audio_content(transcription=""),
+                    success=False,
+                    error_message="缺少語音轉錄文字"
+                )
+            
+            # Create content entity
+            content = create_audio_content(
+                transcription=audio_transcription,
+                duration_seconds=audio_duration
+            )
+            
+            # Use transcription for summarization
+            text_to_summarize = audio_transcription
+            print(f"🎙️ [Summarize] Processing audio ({len(audio_transcription)} chars)")
+
         else:
             content = create_text_content(raw_input)
             text_to_summarize = raw_input
+
 
         # Step 2: Check if content is empty
         if not text_to_summarize.strip():
@@ -275,6 +375,38 @@ class SummarizeUseCase:
 
         # Step 4: Summarize with AI
         try:
+            # Special handling for IMAGE type (uses vision API)
+            if input_type == ContentType.IMAGE and image_data:
+                print(f"🖼️ [Summarize] Using Vision API for image analysis")
+                
+                # Use vision API to analyze image
+                vision_result = await self.ai_service.analyze_image(
+                    image_data=image_data,
+                    mime_type=image_mime_type or "image/jpeg",
+                    prompt=template.prompt if template else None
+                )
+                
+                if not vision_result.success:
+                    return SummarizeResult(
+                        content=content,
+                        success=False,
+                        error_message=f"圖片分析失敗: {vision_result.error_message}"
+                    )
+                
+                # Update content with vision results
+                content.image_description = vision_result.description
+                content.title = vision_result.title or "圖片"
+                content.summary = vision_result.description
+                content.tags = vision_result.tags
+                
+                # Return early for images
+                return SummarizeResult(
+                    content=content,
+                    success=True,
+                    template_used=template.name if template else "image",
+                    output_format_used=template.output_format if template else "圖片分析"
+                )
+            
             if template and schema:
                 # 使用新的 Structured Output API
                 print(f"🎯 [Summarize] 使用 Structured Output API")

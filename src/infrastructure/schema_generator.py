@@ -229,13 +229,17 @@ class SchemaGenerator:
     
     def _ensure_base_fields(self, schema: dict) -> dict:
         """
-        確保 Schema 包含必要的基礎欄位。
+        確保 Schema 包含必要的基礎欄位，並符合 Strict Mode 要求。
+        
+        Rules:
+        1. 必須包含 "標題" 和 "標籤"
+        2. 所有 properties 必須列在 required 中（OpenAI Strict Mode 要求）
         
         Args:
             schema: 原始 Schema
             
         Returns:
-            包含基礎欄位的 Schema
+            修正後的 Schema
         """
         properties = schema.get("properties", {})
         required = schema.get("required", [])
@@ -243,16 +247,21 @@ class SchemaGenerator:
         # 確保有 標題
         if "標題" not in properties:
             properties["標題"] = self.BASE_PROPERTIES["標題"]
-            if "標題" not in required:
-                required.append("標題")
         
         # 確保有 標籤
         if "標籤" not in properties:
             properties["標籤"] = self.BASE_PROPERTIES["標籤"]
-            if "標籤" not in required:
-                required.append("標籤")
+        
+        # OpenAI Strict Mode:所有屬性都必須是 required
+        # 我們將所有定義在 properties 的欄位都加入 required
+        all_keys = list(properties.keys())
+        required = list(set(required + all_keys))
         
         schema["properties"] = properties
         schema["required"] = required
+        
+        # OpenAI Strict Mode: 必須有 additionalProperties: false
+        # 注意：這部分通常由 AI Service 在調用時處理，但也可以這裡加
+        schema["additionalProperties"] = False
         
         return schema

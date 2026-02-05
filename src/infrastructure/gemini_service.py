@@ -154,12 +154,18 @@ class GeminiService:
             print(f"🎯 [Gemini] 使用 Structured Output API")
             print(f"📋 [Gemini] Schema 欄位: {list(schema.get('properties', {}).keys())}")
             
+            # Gemini does not support 'additionalProperties', but OpenAI needs it.
+            # Create a copy and remove it for Gemini.
+            gemini_schema = schema.copy()
+            if "additionalProperties" in gemini_schema:
+                del gemini_schema["additionalProperties"]
+
             # 使用 Structured Output API
             response = await self.model.generate_content_async(
                 full_prompt,
                 generation_config=genai.GenerationConfig(
                     response_mime_type="application/json",
-                    response_schema=schema
+                    response_schema=gemini_schema
                 )
             )
             

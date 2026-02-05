@@ -4,7 +4,7 @@
 一個多平台 Bot（Line / Telegram），接收使用者傳送的文字、網址、社群貼文、YouTube 影片或圖片，
 使用 AI 進行摘要分析，並儲存至 Notion 資料庫。
 
-## 2. Current Status: ✅ Phase 7.7 Completed
+## 2. Current Status: ✅ Phase 7.8 Completed
 
 ### 已完成功能
 - ✅ 文字訊息摘要
@@ -97,7 +97,10 @@ Line bot/
 │   │   ├── social_detector.py  # 社群/YouTube URL 偵測
 │   │   ├── apify_scraper.py    # 社群貼文爬取 (Apify)
 │   │   ├── drive_service.py    # Google Drive 上傳
-│   │   └── image_detector.py   # 圖片 URL 偵測
+│   │   ├── image_detector.py   # 圖片 URL 偵測
+│   │   ├── response_builder.py # 統一回應建構器 ✅ NEW
+│   │   ├── schema_generator.py # 動態 Schema 生成器 ✅ NEW
+│   │   └── prompt_template_manager.py # Notion 模板管理器 ✅ NEW
 │   └── main.py
 ├── requirements.txt
 ├── spec.md

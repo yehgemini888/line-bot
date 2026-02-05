@@ -114,13 +114,17 @@ class OpenAIService:
             Generated text response
         """
         try:
+            # Detect if this is a Schema generation request (needs more tokens)
+            is_schema_generation = "JSON Schema" in prompt or "輸出結構" in prompt
+            max_tokens = 1000 if is_schema_generation else 100
+            
             response = await self.client.chat.completions.create(
                 model=self.text_model,
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                max_tokens=50
+                max_tokens=max_tokens
             )
             return response.choices[0].message.content.strip()
         except Exception as e:

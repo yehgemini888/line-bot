@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import httpx
 
 from src.domain.content import Content, ContentType, SocialPlatform
+from src.infrastructure.response_builder import ResponseBuilder
 from src.usecase.summarize import SummarizeUseCase
 from src.usecase.save_to_notion import SaveToNotionUseCase
 from src.infrastructure.social_detector import SocialDetector
@@ -52,7 +53,8 @@ class TelegramHandler:
         youtube_service=None,
         ai_service=None,
         whisper_service=None,
-        process_image_usecase=None
+        process_image_usecase=None,
+        drive_service=None
     ):
         """
         Initialize the handler.
@@ -67,6 +69,7 @@ class TelegramHandler:
             ai_service: AI service for summarization
             whisper_service: Service for speech-to-text
             process_image_usecase: Use case for processing images (upload to Drive + AI analysis)
+            drive_service: Service for uploading images to Google Drive
         """
         self.bot_token = bot_token
         self.api_base = self.API_BASE.format(token=bot_token)
@@ -78,6 +81,7 @@ class TelegramHandler:
         self.ai_service = ai_service
         self.whisper_service = whisper_service
         self.process_image_usecase = process_image_usecase
+        self.drive_service = drive_service
 
     def parse_update(self, update: dict) -> Optional[TelegramUpdate]:
         """Parse Telegram update JSON to TelegramUpdate object."""
@@ -250,8 +254,6 @@ class TelegramHandler:
 
     async def _handle_youtube(self, youtube_url: str) -> str:
         """Handle YouTube URL processing."""
-        from src.domain.content import create_youtube_content
-
         print(f"🎬 [YouTube] Processing: {youtube_url}")
 
         # Get video info
@@ -259,51 +261,38 @@ class TelegramHandler:
         if not video_info:
             return "❌ 無法取得 YouTube 影片資訊，請確認網址是否正確"
 
-        # Prepare content for AI
-        if video_info.has_captions and video_info.captions:
-            text_to_summarize = f"""影片標題：{video_info.title}
-頻道：{video_info.channel_name}
-時長：{video_info.duration}
-
-字幕內容：
-{video_info.captions[:15000]}"""
-            has_captions = True
-        else:
-            text_to_summarize = f"""影片標題：{video_info.title}
-頻道：{video_info.channel_name}
-時長：{video_info.duration}
-
-影片描述：
-{video_info.description[:3000] if video_info.description else '(無描述)'}"""
-            has_captions = False
-
-        # AI Summarization
-        summary_result = await self.ai_service.summarize(
-            content=text_to_summarize,
-            content_type="youtube"
+        # Step 2: Summarize via SummarizeUseCase (NEW - uses template system)
+        summarize_result = await self.summarize_usecase.execute(
+            raw_input=youtube_url,
+            input_type=ContentType.YOUTUBE,
+            youtube_info={
+                "title": video_info.title,
+                "captions": video_info.captions,
+                "description": video_info.description,
+                "channel": video_info.channel_name,
+                "duration": video_info.duration
+            }
         )
+        if not summarize_result.success:
+            return f"❌ 處理失敗：{summarize_result.error_message}"
 
-        if not summary_result.success:
-            return f"❌ AI 摘要失敗：{summary_result.error_message}"
-
-        # Create content entity
-        content = create_youtube_content(
-            url=youtube_url,
-            title=video_info.title,
-            channel_name=video_info.channel_name,
-            video_duration=video_info.duration
-        )
-        content.summary = summary_result.summary
-        content.title = summary_result.title or video_info.title
-        content.tags = summary_result.tags
+        content = summarize_result.content
 
         # Save to Notion
         save_result = await self.save_usecase.execute(content)
         if not save_result.success:
             return f"❌ 儲存失敗：{save_result.error_message}"
 
-        # Build response
-        return self._build_youtube_response(content, video_info, has_captions, save_result.page_url)
+        # Build response with template info
+        has_captions = video_info.has_captions and video_info.captions
+        return self._build_youtube_response(
+            content,
+            video_info,
+            has_captions,
+            save_result.page_url,
+            template_used=summarize_result.template_used,
+            output_format_used=summarize_result.output_format_used
+        )
 
     def _build_success_response(
         self, 
@@ -334,31 +323,22 @@ class TelegramHandler:
 
     def _build_youtube_response(
         self,
-        content: Content,
+        content,
         video_info,
         has_captions: bool,
-        page_url: Optional[str] = None
+        page_url: Optional[str] = None,
+        template_used: Optional[str] = None,
+        output_format_used: Optional[str] = None
     ) -> str:
         """Build YouTube success response."""
-        tags_str = ", ".join(content.tags) if content.tags else "無"
-        caption_note = "" if has_captions else "\n\n⚠️ 此影片無字幕，僅能提供基本摘要"
-
-        response = f"""✅ YouTube 影片已儲存至 Notion！
-
-🎬 頻道：{video_info.channel_name}
-⏱️ 時長：{video_info.duration}
-
-📌 標題：{content.title}
-
-📝 摘要：
-{content.summary}
-
-🏷️ 標籤：{tags_str}{caption_note}"""
-
-        if page_url:
-            response += f"\n\n📄 Notion 連結：{page_url}"
-
-        return response
+        return ResponseBuilder.build_youtube_response(
+            content=content,
+            video_info=video_info,
+            has_captions=has_captions,
+            page_url=page_url,
+            template_used=template_used,
+            output_format_used=output_format_used
+        )
 
     async def _handle_voice_message(self, voice: dict, chat_id: int) -> str:
         """
@@ -371,8 +351,6 @@ class TelegramHandler:
         Returns:
             Response message string
         """
-        from src.domain.content import create_audio_content
-
         if not self.whisper_service:
             return "❌ 語音功能未啟用"
 
@@ -411,26 +389,18 @@ class TelegramHandler:
             transcribed_text = result.text
             print(f"🎙️ [Telegram] Transcribed: {transcribed_text[:50]}...")
 
-            # Summarize the transcription
-            if not self.ai_service:
-                return f"✅ 語音轉文字完成：\n\n{transcribed_text}"
-
-            summary_result = await self.ai_service.summarize(
-                content=transcribed_text,
-                content_type="audio"
+            # Step 3: Summarize via SummarizeUseCase (NEW - uses template system)
+            summarize_result = await self.summarize_usecase.execute(
+                raw_input=transcribed_text,
+                input_type=ContentType.AUDIO,
+                audio_transcription=transcribed_text,
+                audio_duration=duration
             )
 
-            if not summary_result.success:
-                return f"✅ 語音轉文字完成：\n\n{transcribed_text}"
+            if not summarize_result.success:
+                return f"✅ 語音轉文字完成（摘要失敗）：\n\n{transcribed_text}"
 
-            # Create content entity
-            content = create_audio_content(
-                transcription=transcribed_text,
-                duration_seconds=duration
-            )
-            content.title = summary_result.title
-            content.summary = summary_result.summary
-            content.tags = summary_result.tags
+            content = summarize_result.content
 
             # Save to Notion
             save_result = await self.save_usecase.execute(content)
@@ -443,7 +413,9 @@ class TelegramHandler:
                 content,
                 transcribed_text,
                 duration,
-                save_result.page_url
+                save_result.page_url,
+                template_used=summarize_result.template_used,
+                output_format_used=summarize_result.output_format_used
             )
 
         except Exception as e:
@@ -480,35 +452,19 @@ class TelegramHandler:
         content,
         transcription: str,
         duration: float,
-        page_url: Optional[str] = None
+        page_url: Optional[str] = None,
+        template_used: Optional[str] = None,
+        output_format_used: Optional[str] = None
     ) -> str:
         """Build success response for audio processing."""
-        tags_str = ", ".join(content.tags) if content.tags else "無"
-        duration_str = f"{int(duration)}秒" if duration else "未知"
-
-        # Truncate transcription if too long
-        display_transcription = transcription
-        if len(transcription) > 200:
-            display_transcription = transcription[:200] + "..."
-
-        response = f"""✅ 語音訊息已儲存至 Notion！
-
-🎙️ 時長：{duration_str}
-
-📝 轉錄內容：
-{display_transcription}
-
-📌 標題：{content.title}
-
-📋 摘要：
-{content.summary}
-
-🏷️ 標籤：{tags_str}"""
-
-        if page_url:
-            response += f"\n\n📄 Notion 連結：{page_url}"
-
-        return response
+        return ResponseBuilder.build_audio_response(
+            content=content,
+            transcription=transcription,
+            duration=duration,
+            page_url=page_url,
+            template_used=template_used,
+            output_format_used=output_format_used
+        )
 
     async def _handle_photo_message(self, photo: list, caption: str, chat_id: int) -> str:
         """
@@ -524,8 +480,8 @@ class TelegramHandler:
         """
         import uuid
 
-        # Check if process_image_usecase is available (preferred method with Drive upload)
-        if self.process_image_usecase:
+        # Check if drive_service is available (preferred method with Drive upload)
+        if self.drive_service:
             try:
                 # Telegram sends multiple photo sizes, get the largest one
                 largest_photo = photo[-1] if photo else None
@@ -568,26 +524,48 @@ class TelegramHandler:
                 # Generate filename
                 filename = f"telegram_photo_{uuid.uuid4().hex[:8]}{ext}"
 
-                # Use ProcessImageUseCase (uploads to Drive + AI analysis + saves to Notion)
-                result = await self.process_image_usecase.execute(
+                # Step 1: Upload to Google Drive first
+                upload_result = await self.drive_service.upload_image(
                     image_data=image_bytes,
                     filename=filename,
                     mime_type=mime_type
                 )
 
-                if not result.success:
-                    return f"❌ 處理失敗：{result.error_message}"
+                if not upload_result.success:
+                    return f"❌ 上傳圖片失敗：{upload_result.error_message}"
+
+                # Step 2: Analyze and summarize via SummarizeUseCase (NEW - uses template system)
+                summarize_result = await self.summarize_usecase.execute(
+                    raw_input="[Telegram Photo]",
+                    input_type=ContentType.IMAGE,
+                    image_data=image_bytes,
+                    image_mime_type=mime_type,
+                    image_url=upload_result.file_url
+                )
+
+                if not summarize_result.success:
+                    return f"❌ 處理失敗：{summarize_result.error_message}"
+
+                content = summarize_result.content
+                content.image_url = upload_result.file_url
 
                 # Update content with caption if provided
-                content = result.content
-                if caption and content:
+                if caption:
                     content.summary = f"📝 用戶說明：{caption}\n\n🖼️ 圖片分析：\n{content.image_description}"
 
-                # Build response
+                # Step 3: Save to Notion
+                save_result = await self.save_usecase.execute(content)
+
+                if not save_result.success:
+                    return f"❌ 儲存失敗：{save_result.error_message}"
+
+                # Build response with template info
                 return self._build_photo_success_response(
                     content,
                     caption,
-                    result.page_url
+                    save_result.page_url,
+                    template_used=summarize_result.template_used,
+                    output_format_used=summarize_result.output_format_used
                 )
 
             except Exception as e:
@@ -656,22 +634,15 @@ class TelegramHandler:
         self,
         content,
         caption: str,
-        page_url: Optional[str] = None
+        page_url: Optional[str] = None,
+        template_used: Optional[str] = None,
+        output_format_used: Optional[str] = None
     ) -> str:
         """Build success response for photo processing."""
-        tags_str = ", ".join(content.tags) if content.tags else "無"
-        caption_info = f"\n📝 用戶說明：{caption}" if caption else ""
-
-        response = f"""✅ 圖片已儲存至 Notion！
-{caption_info}
-📌 標題：{content.title}
-
-🖼️ 圖片描述：
-{content.summary}
-
-🏷️ 標籤：{tags_str}"""
-
-        if page_url:
-            response += f"\n\n📄 Notion 連結：{page_url}"
-
-        return response
+        return ResponseBuilder.build_image_response(
+            content=content,
+            page_url=page_url,
+            caption=caption if caption else None,
+            template_used=template_used,
+            output_format_used=output_format_used
+        )

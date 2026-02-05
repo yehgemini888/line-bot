@@ -220,8 +220,11 @@ def get_telegram_handler() -> TelegramHandler:
         )
         save_usecase = SaveToNotionUseCase(repository=notion_repo)
         
-        # Get ProcessImageUseCase
+        # Get ProcessImageUseCase and Drive service
         process_image_usecase = get_process_image_usecase()
+        drive_service = None
+        if process_image_usecase:
+            drive_service = process_image_usecase.image_uploader
 
         # Telegram Handler
         _telegram_handler = TelegramHandler(
@@ -233,7 +236,8 @@ def get_telegram_handler() -> TelegramHandler:
             youtube_service=youtube_service,
             ai_service=ai_service,
             whisper_service=whisper_service,
-            process_image_usecase=process_image_usecase
+            process_image_usecase=process_image_usecase,
+            drive_service=drive_service
         )
     return _telegram_handler
 

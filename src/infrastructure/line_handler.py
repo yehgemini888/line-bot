@@ -18,6 +18,7 @@ from linebot.v3.messaging import (
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
 from src.domain.content import Content, ContentType, SocialPlatform
+from src.infrastructure.response_builder import ResponseBuilder
 from src.usecase.summarize import SummarizeUseCase
 from src.usecase.save_to_notion import SaveToNotionUseCase
 from src.infrastructure.social_detector import SocialDetector
@@ -387,10 +388,10 @@ class LineMessageHandler:
         Returns:
             Result message to send back to user
         """
-        if not self.process_image_usecase:
-            return "❌ 圖片處理功能未啟用"
+        if not self.drive_service:
+            return "❌ 圖片處理功能未啟用（需要 Google Drive）"
 
-        # Download image from Line
+        # Step 1: Download image from Line
         image_data = await self.download_line_image(message_id)
         if not image_data:
             return "❌ 無法下載圖片"
@@ -398,17 +399,44 @@ class LineMessageHandler:
         # Generate filename
         filename = f"line_image_{uuid.uuid4().hex[:8]}.jpg"
 
-        # Process image
-        result = await self.process_image_usecase.execute(
+        # Step 2: Upload to Google Drive first
+        upload_result = await self.drive_service.upload_image(
             image_data=image_data,
             filename=filename,
             mime_type="image/jpeg"
         )
 
-        if not result.success:
-            return f"❌ 處理失敗：{result.error_message}"
+        if not upload_result.success:
+            return f"❌ 上傳圖片失敗：{upload_result.error_message}"
 
-        return self._build_image_success_response(result.content, result.page_url)
+        # Step 3: Analyze and summarize via SummarizeUseCase (NEW - uses template system)
+        summarize_result = await self.summarize_usecase.execute(
+            raw_input="[Image]",
+            input_type=ContentType.IMAGE,
+            image_data=image_data,
+            image_mime_type="image/jpeg",
+            image_url=upload_result.file_url
+        )
+
+        if not summarize_result.success:
+            return f"❌ 處理失敗：{summarize_result.error_message}"
+
+        content = summarize_result.content
+        # Update with Drive URL (in case it wasn't set)
+        content.image_url = upload_result.file_url
+
+        # Step 4: Save to Notion
+        save_result = await self.save_usecase.execute(content)
+
+        if not save_result.success:
+            return f"❌ 儲存失敗：{save_result.error_message}"
+
+        return self._build_image_success_response(
+            content,
+            save_result.page_url,
+            template_used=summarize_result.template_used,
+            output_format_used=summarize_result.output_format_used
+        )
 
     async def handle_image_url_with_push(
         self,
@@ -425,10 +453,10 @@ class LineMessageHandler:
         Returns:
             Result message to send back to user
         """
-        if not self.process_image_usecase:
-            return "❌ 圖片處理功能未啟用"
+        if not self.drive_service:
+            return "❌ 圖片處理功能未啟用（需要 Google Drive）"
 
-        # Download image from URL
+        # Step 1: Download image from URL
         image_data = await self.download_image_from_url(image_url)
         if not image_data:
             return "❌ 無法下載圖片，請確認網址是否正確"
@@ -447,41 +475,59 @@ class LineMessageHandler:
 
         filename = f"url_image_{uuid.uuid4().hex[:8]}{ext}"
 
-        # Process image
-        result = await self.process_image_usecase.execute(
+        # Step 2: Upload to Google Drive first
+        upload_result = await self.drive_service.upload_image(
             image_data=image_data,
             filename=filename,
             mime_type=mime_type
         )
 
-        if not result.success:
-            return f"❌ 處理失敗：{result.error_message}"
+        if not upload_result.success:
+            return f"❌ 上傳圖片失敗：{upload_result.error_message}"
 
-        return self._build_image_success_response(result.content, result.page_url)
+        # Step 3: Analyze and summarize via SummarizeUseCase (NEW - uses template system)
+        summarize_result = await self.summarize_usecase.execute(
+            raw_input=image_url,
+            input_type=ContentType.IMAGE,
+            image_data=image_data,
+            image_mime_type=mime_type,
+            image_url=upload_result.file_url
+        )
+
+        if not summarize_result.success:
+            return f"❌ 處理失敗：{summarize_result.error_message}"
+
+        content = summarize_result.content
+        # Update with Drive URL
+        content.image_url = upload_result.file_url
+
+        # Step 4: Save to Notion
+        save_result = await self.save_usecase.execute(content)
+
+        if not save_result.success:
+            return f"❌ 儲存失敗：{save_result.error_message}"
+
+        return self._build_image_success_response(
+            content,
+            save_result.page_url,
+            template_used=summarize_result.template_used,
+            output_format_used=summarize_result.output_format_used
+        )
 
     def _build_image_success_response(
         self,
         content: Content,
-        page_url: Optional[str] = None
+        page_url: Optional[str] = None,
+        template_used: Optional[str] = None,
+        output_format_used: Optional[str] = None
     ) -> str:
         """Build success response message for image processing."""
-        tags_str = ", ".join(content.tags) if content.tags else "無"
-
-        response = f"""✅ 圖片已儲存至 Notion！
-
-📌 標題：{content.title}
-
-📝 描述：
-{content.image_description or content.summary}
-
-🏷️ 標籤：{tags_str}
-
-🖼️ 圖片連結：{content.image_url}"""
-
-        if page_url:
-            response += f"\n\n📄 Notion 連結：{page_url}"
-
-        return response
+        return ResponseBuilder.build_image_response(
+            content=content,
+            page_url=page_url,
+            template_used=template_used,
+            output_format_used=output_format_used
+        )
 
     async def handle_youtube_with_push(
         self,
@@ -498,13 +544,8 @@ class LineMessageHandler:
         Returns:
             Result message to send back to user
         """
-        from src.domain.content import create_youtube_content
-
         if not self.youtube_service:
             return "❌ YouTube 功能未啟用"
-
-        if not self.ai_service:
-            return "❌ AI 服務未設定"
 
         print(f"🎬 [YouTube] Processing: {youtube_url}")
 
@@ -514,60 +555,39 @@ class LineMessageHandler:
         if not video_info:
             return "❌ 無法取得 YouTube 影片資訊，請確認網址是否正確"
 
-        # Step 2: Prepare content for AI summarization
-        if video_info.has_captions and video_info.captions:
-            # Use captions for deep summary
-            text_to_summarize = f"""影片標題：{video_info.title}
-頻道：{video_info.channel_name}
-時長：{video_info.duration}
-
-字幕內容：
-{video_info.captions[:15000]}"""  # Limit to avoid token limits
-            has_captions = True
-        else:
-            # Use title + description for basic summary
-            text_to_summarize = f"""影片標題：{video_info.title}
-頻道：{video_info.channel_name}
-時長：{video_info.duration}
-
-影片描述：
-{video_info.description[:3000] if video_info.description else '(無描述)'}"""
-            has_captions = False
-
-        print(f"📝 [YouTube] Summarizing (has_captions={has_captions})")
-
-        # Step 3: AI Summarization
-        summary_result = await self.ai_service.summarize(
-            content=text_to_summarize,
-            content_type="youtube"
+        # Step 2: Summarize via SummarizeUseCase (NEW - uses template system)
+        summarize_result = await self.summarize_usecase.execute(
+            raw_input=youtube_url,
+            input_type=ContentType.YOUTUBE,
+            youtube_info={
+                "title": video_info.title,
+                "captions": video_info.captions,
+                "description": video_info.description,
+                "channel": video_info.channel_name,
+                "duration": video_info.duration
+            }
         )
 
-        if not summary_result.success:
-            return f"❌ AI 摘要失敗：{summary_result.error_message}"
+        if not summarize_result.success:
+            return f"❌ 處理失敗：{summarize_result.error_message}"
 
-        # Step 4: Create content entity
-        content = create_youtube_content(
-            url=youtube_url,
-            title=video_info.title,
-            channel_name=video_info.channel_name,
-            video_duration=video_info.duration
-        )
-        content.summary = summary_result.summary
-        content.title = summary_result.title or video_info.title
-        content.tags = summary_result.tags
+        content = summarize_result.content
 
-        # Step 5: Save to Notion
+        # Step 3: Save to Notion
         save_result = await self.save_usecase.execute(content)
 
         if not save_result.success:
             return f"❌ 儲存失敗：{save_result.error_message}"
 
-        # Build success response
+        # Build success response with template info
+        has_captions = video_info.has_captions and video_info.captions
         return self._build_youtube_success_response(
             content, 
             video_info, 
             has_captions,
-            save_result.page_url
+            save_result.page_url,
+            template_used=summarize_result.template_used,
+            output_format_used=summarize_result.output_format_used
         )
 
     def _build_youtube_success_response(
@@ -575,32 +595,19 @@ class LineMessageHandler:
         content,
         video_info,
         has_captions: bool,
-        page_url: Optional[str] = None
+        page_url: Optional[str] = None,
+        template_used: Optional[str] = None,
+        output_format_used: Optional[str] = None
     ) -> str:
         """Build success response message for YouTube processing."""
-        tags_str = ", ".join(content.tags) if content.tags else "無"
-
-        # Add warning if no captions
-        caption_note = ""
-        if not has_captions:
-            caption_note = "\n\n⚠️ 此影片無字幕，僅能提供基本摘要"
-
-        response = f"""✅ YouTube 影片已儲存至 Notion！
-
-🎬 頻道：{video_info.channel_name}
-⏱️ 時長：{video_info.duration}
-
-📌 標題：{content.title}
-
-📝 摘要：
-{content.summary}
-
-🏷️ 標籤：{tags_str}{caption_note}"""
-
-        if page_url:
-            response += f"\n\n📄 Notion 連結：{page_url}"
-
-        return response
+        return ResponseBuilder.build_youtube_response(
+            content=content,
+            video_info=video_info,
+            has_captions=has_captions,
+            page_url=page_url,
+            template_used=template_used,
+            output_format_used=output_format_used
+        )
 
     async def handle_audio_message(self, user_id: str, message_id: str) -> str:
         """
@@ -613,8 +620,6 @@ class LineMessageHandler:
         Returns:
             Response message string
         """
-        from src.domain.content import create_audio_content
-
         if not self.whisper_service:
             return "❌ 語音功能未啟用"
 
@@ -642,40 +647,34 @@ class LineMessageHandler:
 
             print(f"🎙️ [Audio] Transcribed: {transcribed_text[:50]}...")
 
-            # Summarize the transcription
-            if not self.ai_service:
-                return f"✅ 語音轉文字完成：\n\n{transcribed_text}"
-
-            summary_result = await self.ai_service.summarize(
-                content=transcribed_text,
-                content_type="audio"
+            # Step 3: Summarize via SummarizeUseCase (NEW - uses template system)
+            summarize_result = await self.summarize_usecase.execute(
+                raw_input=transcribed_text,
+                input_type=ContentType.AUDIO,
+                audio_transcription=transcribed_text,
+                audio_duration=duration
             )
 
-            if not summary_result.success:
+            if not summarize_result.success:
                 # Return transcription even if summarization fails
                 return f"✅ 語音轉文字完成（摘要失敗）：\n\n{transcribed_text}"
 
-            # Create content entity
-            content = create_audio_content(
-                transcription=transcribed_text,
-                duration_seconds=duration
-            )
-            content.title = summary_result.title
-            content.summary = summary_result.summary
-            content.tags = summary_result.tags
+            content = summarize_result.content
 
-            # Save to Notion
+            # Step 4: Save to Notion
             save_result = await self.save_usecase.execute(content)
 
             if not save_result.success:
                 return f"❌ 儲存失敗：{save_result.error_message}"
 
-            # Build response
+            # Build response with template info
             return self._build_audio_success_response(
                 content,
                 transcribed_text,
                 duration,
-                save_result.page_url
+                save_result.page_url,
+                template_used=summarize_result.template_used,
+                output_format_used=summarize_result.output_format_used
             )
 
         except Exception as e:
@@ -687,32 +686,16 @@ class LineMessageHandler:
         content,
         transcription: str,
         duration: Optional[float],
-        page_url: Optional[str] = None
+        page_url: Optional[str] = None,
+        template_used: Optional[str] = None,
+        output_format_used: Optional[str] = None
     ) -> str:
         """Build success response for audio processing."""
-        tags_str = ", ".join(content.tags) if content.tags else "無"
-        duration_str = f"{int(duration)}秒" if duration else "未知"
-
-        # Truncate transcription if too long
-        display_transcription = transcription
-        if len(transcription) > 200:
-            display_transcription = transcription[:200] + "..."
-
-        response = f"""✅ 語音訊息已儲存至 Notion！
-
-🎙️ 時長：{duration_str}
-
-📝 轉錄內容：
-{display_transcription}
-
-📌 標題：{content.title}
-
-📋 摘要：
-{content.summary}
-
-🏷️ 標籤：{tags_str}"""
-
-        if page_url:
-            response += f"\n\n📄 Notion 連結：{page_url}"
-
-        return response
+        return ResponseBuilder.build_audio_response(
+            content=content,
+            transcription=transcription,
+            duration=duration,
+            page_url=page_url,
+            template_used=template_used,
+            output_format_used=output_format_used
+        )
