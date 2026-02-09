@@ -32,7 +32,8 @@ class NotionRepository:
             api_key: Notion integration token
             database_id: Target database ID
         """
-        self.client = AsyncClient(auth=api_key)
+        # Pin to 2022-06-28 API version (v2.7.0 defaults to 2025-09-03 which removed databases.query)
+        self.client = AsyncClient(auth=api_key, notion_version="2022-06-28")
         self.database_id = database_id
 
     def _split_text(self, text: str, max_length: int = 1000) -> List[dict]:

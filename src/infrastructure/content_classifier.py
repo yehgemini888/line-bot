@@ -60,7 +60,7 @@ class ContentClassifier:
         """
         # Step 1: Try URL-based classification (fast)
         if url:
-            url_category = self._classify_by_url(url)
+            url_category = self._classify_by_url_static(url)
             if url_category:
                 print(f"🏷️ [Classifier] URL match: {url_category}")
                 return ClassificationResult(
@@ -80,8 +80,9 @@ class ContentClassifier:
         # Step 3: AI classification with dynamic categories
         return await self._classify_by_ai(content)
 
-    def _classify_by_url(self, url: str) -> Optional[str]:
-        """Classify by URL pattern (fast path)."""
+    @staticmethod
+    def _classify_by_url_static(url: str) -> Optional[str]:
+        """Classify by URL pattern (fast path). Static for reuse."""
         url_lower = url.lower()
         
         # Tech patterns

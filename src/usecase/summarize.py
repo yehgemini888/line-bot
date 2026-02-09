@@ -139,11 +139,10 @@ class SummarizeUseCase:
 
     async def _ensure_templates_loaded(self):
         """
-        每次都從 Notion 重新載入模板。
-        確保 Notion 的變更能即時反映。
+        從 Notion 載入模板（帶 TTL 快取）。
+        TTL 內不重新載入，減少 API 呼叫。
         """
         if self.template_manager:
-            print(f"🔄 [Summarize] Loading templates from Notion...")
             try:
                 await self.template_manager.load_from_notion()
                 print(f"📋 [Summarize] Available categories: {self.template_manager.get_all_categories()}")
@@ -344,30 +343,24 @@ class SummarizeUseCase:
                 error_message="內容為空，無法進行摘要"
             )
 
-        # Step 3: Smart prompt selection (classify content and get template + schema)
+        # Step 3: Smart prompt selection (merged classify + schema in 1 AI call)
         template = None
         schema = None
         template_used = None
-        
-        if self.enable_smart_prompt and self.classifier and self.template_manager:
+
+        if self.enable_smart_prompt and self.template_manager:
             try:
-                # Classify the content
                 url_for_classify = raw_input if input_type == ContentType.URL else None
-                classification = await self.classifier.classify(
+                # 合併分類 + Schema 生成（URL/keyword 快速匹配不用 AI，否則 1 次 AI 呼叫）
+                template, schema, category = await self.template_manager.classify_and_get_template_with_schema(
                     content=text_to_summarize[:1500],
+                    ai_service=self.ai_service,
                     url=url_for_classify
                 )
-                
-                # Get the prompt template AND schema
-                template, schema = await self.template_manager.get_template_with_schema(
-                    classification.category,
-                    text_to_summarize,  # 傳入內容以便動態生成 Schema
-                    self.ai_service
-                )
-                template_used = template.name if template else classification.category
-                print(f"🏷️ [Summarize] 使用模板: {classification.category}")
+                template_used = template.name if template else category
+                print(f"🏷️ [Summarize] 使用模板: {category}")
                 print(f"📋 [Summarize] 輸出格式: {template.output_format if template else 'default'}")
-                
+
             except Exception as e:
                 print(f"⚠️ [Summarize] Smart prompt 失敗，使用預設: {e}")
                 template = None

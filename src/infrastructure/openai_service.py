@@ -53,6 +53,20 @@ class OpenAIService:
         self.text_model = text_model
         self.vision_model = vision_model
 
+    def _enforce_strict_schema(self, schema: dict) -> dict:
+        """遞迴為所有 object 類型加上 additionalProperties: false 和完整 required。"""
+        if not isinstance(schema, dict):
+            return schema
+        if schema.get("type") == "object" and "properties" in schema:
+            schema["additionalProperties"] = False
+            schema["required"] = list(schema["properties"].keys())
+            for prop in schema["properties"].values():
+                if isinstance(prop, dict):
+                    self._enforce_strict_schema(prop)
+        if "items" in schema and isinstance(schema["items"], dict):
+            self._enforce_strict_schema(schema["items"])
+        return schema
+
     async def summarize(
         self, 
         content: str, 
@@ -178,9 +192,8 @@ class OpenAIService:
             print(f"🎯 [OpenAI] 使用 Structured Output API")
             print(f"📋 [OpenAI] Schema 欄位: {list(schema.get('properties', {}).keys())}")
             
-            # OpenAI 需要 additionalProperties: false
-            openai_schema = dict(schema)
-            openai_schema["additionalProperties"] = False
+            # OpenAI Strict Mode: 每一層 object 都需要 additionalProperties: false 和完整 required
+            openai_schema = self._enforce_strict_schema(dict(schema))
             
             # 使用 Structured Output API
             response = await self.client.chat.completions.create(
