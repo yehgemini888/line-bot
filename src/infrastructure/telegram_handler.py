@@ -116,14 +116,27 @@ class TelegramHandler:
             return None
 
     async def send_message(self, chat_id: int, text: str) -> bool:
-        """Send a message to a Telegram chat."""
+        """Send a message to a Telegram chat.
+
+        Handles messages longer than Telegram's 4096 char limit by splitting.
+        Falls back to plain text if HTML parsing fails.
+        """
+        MAX_LENGTH = 4096
+        chunks = [text[i:i + MAX_LENGTH] for i in range(0, len(text), MAX_LENGTH)]
+
+        for chunk in chunks:
+            success = await self._send_single_message(chat_id, chunk)
+            if not success:
+                return False
+        return True
+
+    async def _send_single_message(self, chat_id: int, text: str) -> bool:
+        """Send a single message, falling back to plain text if HTML fails."""
+        url = f"{self.api_base}/sendMessage"
+
+        # Try without parse_mode first (safe for any content)
         try:
-            url = f"{self.api_base}/sendMessage"
-            payload = {
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML"
-            }
+            payload = {"chat_id": chat_id, "text": text}
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(url, json=payload)
                 response.raise_for_status()
