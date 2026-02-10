@@ -73,44 +73,62 @@
 - [x] Task 05: 測試驗證
 
 **成果：** Telegram Bot @benson_inspiration_bot 上線，無訊息限制
- 
- ---
- 
- ## ✅ Phase 7.8: 系統架構重構與穩定性修復 (COMPLETED)
- - [x] Task 01: 統一 ResponseBuilder (Line/Telegram 共用)
- - [x] Task 02: 統一 Template System 整合 (Telegram 圖片/語音/影片)
- - [x] Task 03: OpenAI Strict Mode 相容性修復 (Schema Required Fields)
- - [x] Task 04: Gemini Schema 相容性修復 (Remove additionalProperties)
- - [x] Task 05: 跨平台功能對齊 (YouTube/Audio/Photo)
- 
- **成果：** 
- 1. 系統架構完全統一，維護成本大幅降低
- 2. 解決了跨 AI 模型的 Schema 相容性問題
- 3. 所有內容類型在所有平台表現一致
 
 ---
 
+## ✅ Phase 7.8: 系統架構重構與穩定性修復 (COMPLETED)
+- [x] Task 01: 統一 ResponseBuilder (Line/Telegram 共用)
+- [x] Task 02: 統一 Template System 整合 (Telegram 圖片/語音/影片)
+- [x] Task 03: OpenAI Strict Mode 相容性修復 (Schema Required Fields)
+- [x] Task 04: Gemini Schema 相容性修復 (Remove additionalProperties)
+- [x] Task 05: 跨平台功能對齊 (YouTube/Audio/Photo)
 
+**成果：** 系統架構統一，跨 AI 模型 Schema 相容，所有平台功能一致
 
-## ⬜ Phase 8: 進階功能 (BACKLOG)
+---
 
-### 📱 Priority 1: 更多社群平台
-- [ ] Instagram 貼文支援
-- [ ] X (Twitter) 貼文支援
+## ✅ Phase 8: AI Pipeline 優化 (COMPLETED)
+- [x] Task 01: Circuit Breaker (Gemini 429/5xx → OpenAI 自動切換，60s 冷卻)
+- [x] Task 02: 合併分類 + Schema 生成 (1 次 AI 呼叫取代 2 次)
+- [x] Task 03: Notion API 版本鎖定 (v2022-06-28 相容性修復)
 
-### 🎧 Priority 2: 多媒體擴充
-- [ ] Podcast 音檔摘要 (Spotify/Apple Podcast)
-- [ ] PDF 文件摘要
+**成果：** AI 呼叫次數減半，429 錯誤自動恢復
 
-### ⚙️ Priority 3: 使用者體驗
-- [ ] 自訂摘要風格 (簡短/詳細/條列)
-- [ ] 多語言摘要支援
-- [ ] 搜尋已儲存內容
-- [ ] Notion 分類資料夾
+---
 
-### 🛠️ Priority 4: 開發體驗
-- [ ] 単元測試完善
-- [ ] CI/CD 整合
+## ✅ Phase 9: 文件支援 + 關鍵字優化 + Structured Logging (COMPLETED)
+- [x] Task 01: 加權關鍵字匹配 (獨有 w=2, 共用 w=1, 模糊 → AI fallback)
+- [x] Task 02: Domain Layer - 新增 ContentType.FILE + file_url/file_name
+- [x] Task 03: DocumentExtractor (PDF/DOCX/XLSX/PPTX/CSV/TXT 文字萃取)
+- [x] Task 04: PDF OCR 回退 (PyMuPDF 渲染 → AI Vision，最多 5 頁)
+- [x] Task 05: Line Handler - handle_file_message_with_push()
+- [x] Task 06: Telegram Handler - _handle_document_message()
+- [x] Task 07: SummarizeUseCase 支援 FILE 類型
+- [x] Task 08: Notion Repo 新增 File URL / File Name 欄位
+- [x] Task 09: Main.py - FileMessageContent 路由 + DocumentExtractor 注入
+- [x] Task 10: Structured Logging (logging_config.py + 245 個 print → logger)
+
+**成果：** 支援 6 種文件格式（含圖片式 PDF OCR），統一日誌框架
+
+---
+
+## 👉 Phase 10: 穩定性與可維護性 (NEXT)
+
+### 🔴 Priority 1: 品質基礎建設
+- [ ] Task 01: 單元測試 — 核心邏輯測試 (keyword matching, document extraction, content classification)
+- [ ] Task 02: Rate Limiting — 防止 API 濫用 (per-user 限流)
+- [ ] Task 03: 錯誤重試機制 — 外部 API 呼叫失敗自動重試 (Notion, Drive, Apify)
+
+### 🟡 Priority 2: 功能擴充
+- [ ] Task 04: X (Twitter) 支援 — Apify 有 X scraper，新增 SocialPlatform.TWITTER
+- [ ] Task 05: 管理員指令 — `/reload_templates`, `/status`, `/stats` 等管理命令
+- [ ] Task 06: 使用者偏好設定 — 每人可設定預設模板、摘要長度
+
+### 🟢 Priority 3: 進階功能
+- [ ] Task 07: 批次處理 — 一次傳多個檔案/連結的排隊處理
+- [ ] Task 08: 舊版 Office 格式 — .doc / .xls / .ppt 支援
+- [ ] Task 09: 監控 Dashboard — 處理量、錯誤率、AI 用量統計
+- [ ] Task 10: Instagram 貼文支援
 
 ---
 
@@ -129,14 +147,35 @@
 | 7.6 | 語音訊息支援 | ✅ 完成 | 4/4 |
 | 7.7 | 系統優化 | ✅ 完成 | 5/5 |
 | 7.8 | 架構重構 | ✅ 完成 | 5/5 |
-| 8 | 進階功能 | ⬜ Backlog | 0/10 |
-
+| 8 | AI Pipeline 優化 | ✅ 完成 | 3/3 |
+| 9 | 文件支援 + Logging | ✅ 完成 | 10/10 |
+| 10 | 穩定性與可維護性 | 👉 Next | 0/10 |
 
 ---
 
 # 🚀 Current Status
 
-**所有核心功能與架構重構已完成！**
+**Phase 9 完成！所有核心功能已實作。**
+
+### 支援的內容類型（7 種，雙平台完整對齊）
+| 類型 | Line | Telegram | AI 處理特點 |
+|------|------|----------|------------|
+| 📝 文字 | ✅ | ✅ | 智慧模板 + 動態 Schema + 閒聊偵測 |
+| 🔗 網址 | ✅ | ✅ | 智慧模板 + Jina Reader (SPA) |
+| 📱 社群 | ✅ | ✅ | Facebook / Threads 自動擷取 |
+| 🎬 YouTube | ✅ | ✅ | 繁中字幕 + 影片結構分析 |
+| 🖼️ 圖片 | ✅ | ✅ | Vision API + Drive 備份 |
+| 🎙️ 語音 | ✅ | ✅ | Whisper 轉錄 + 摘要 |
+| 📄 文件 | ✅ | ✅ | 6 格式萃取 + OCR + Drive 備份 |
+
+### 系統特性
+| 特性 | 說明 |
+|------|------|
+| AI 高可用 | Circuit Breaker: Gemini → OpenAI 自動切換 |
+| 智慧分類 | URL → Keyword → AI 三層匹配策略 |
+| 動態 Schema | 依內容自動生成結構化輸出格式 |
+| Structured Logging | LOG_LEVEL 環境變數控制日誌等級 |
+| 文件 OCR | 圖片式 PDF 自動偵測 → AI Vision 辨識 |
 
 ### 生產環境
 - 🌐 **Zeabur**: https://line-bot9.zeabur.app
@@ -144,26 +183,14 @@
 - 📱 **Telegram Bot Webhook**: /telegram/webhook
 - 🤖 **Telegram**: @benson_inspiration_bot
 
-### 支援的內容類型
-| 類型 | 來源 | AI 處理特點 |
-|------|------|------------|
-| 📝 文字 | 純文字訊息 | 智慧模板 + 動態 Schema |
-| 🔗 網址 | 一般網頁 (SSR) | 智慧模板 + 動態 Schema |
-| 🌐 SPA | JS 網站 (Jina Reader) | 智慧模板 + 動態 Schema |
-| 🂬 YouTube | 影片連結 | 含字幕摘要 + 影片結構分析 |
-| 📱 社群 | Facebook / Threads | 自動提取核心內容 |
-| 🖼️ 圖片 | Line/Tel 圖片 / 連結 | Vision API + Drive 備份 |
-| 🎙️ 語音 | 語音訊息 | Whisper 轉錄 + 語氣分析 |
-
-
 ---
 
 # 💎 Memory Crystal
 
 ```
 Project: Line Bot Content Saver
-Phase: 7.8 (Refactoring & Stability) ✅ COMPLETED
-Status: Production Ready & Stabilized
+Phase: 9 (文件支援 + Structured Logging) ✅ COMPLETED
+Status: Production Ready
 
 Production URLs:
 - Zeabur: https://line-bot9.zeabur.app
@@ -171,12 +198,16 @@ Production URLs:
 - Telegram Webhook: /telegram/webhook
 - Telegram Bot: @benson_inspiration_bot
 
-Key Changes (2026-02-05):
-- ResponseBuilder: Unified response logic for consistent UX
-- Schema Compatibility: Fixed additionalProperties for Gemini / strict mode for OpenAI
-- Full Parity: Line & Telegram support identical features
-- Content-Aware: Dynamic schema generation for all content types
+Key Changes (2026-02-10):
+- DocumentExtractor: PDF/DOCX/XLSX/PPTX/CSV/TXT + OCR fallback
+- Structured Logging: 245 print() → logger with LOG_LEVEL control
+- Weighted Keywords: unique=2, shared=1, ambiguity → AI fallback
+- Circuit Breaker: Gemini 429/5xx → OpenAI 60s cooldown
+- Merged Classify+Schema: 1 AI call instead of 2
 
-Completed Phases: 1, 2, 2.5, 3, 4, 6, 7, 7.5, 7.6, 7.7, 7.8
-Next Phase: 8 (Advanced Features - Backlog)
+Content Types: TEXT, URL, SOCIAL, IMAGE, YOUTUBE, AUDIO, FILE (7 types)
+Platforms: Line + Telegram (fully aligned)
+
+Completed Phases: 1, 2, 2.5, 3, 4, 6, 7, 7.5, 7.6, 7.7, 7.8, 8, 9
+Next Phase: 10 (穩定性與可維護性)
 ```
