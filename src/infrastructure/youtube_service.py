@@ -13,6 +13,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from apify_client import ApifyClient
 
+import logging
+logger = logging.getLogger(__name__)
+
 # Thread pool for running sync Apify calls
 _executor = ThreadPoolExecutor(max_workers=2)
 
@@ -65,7 +68,7 @@ class YouTubeService:
             self.client = ApifyClient(self.api_token)
         else:
             self.client = None
-            print("⚠️ [YouTube] APIFY_API_TOKEN not set, YouTube scraping disabled")
+            logger.warning("⚠️ [YouTube] APIFY_API_TOKEN not set, YouTube scraping disabled")
 
     @classmethod
     def extract_video_id(cls, url: str) -> Optional[str]:
@@ -93,14 +96,14 @@ class YouTubeService:
         """
         video_id = self.extract_video_id(url)
         if not video_id:
-            print(f"⚠️ [YouTube] Invalid YouTube URL: {url}")
+            logger.warning(f"⚠️ [YouTube] Invalid YouTube URL: {url}")
             return None
 
         if not self.client:
-            print(f"❌ [YouTube] Apify client not initialized")
+            logger.error(f"❌ [YouTube] Apify client not initialized")
             return None
 
-        print(f"🎬 [YouTube] Fetching video info via Apify for: {video_id}")
+        logger.info(f"🎬 [YouTube] Fetching video info via Apify for: {video_id}")
 
         try:
             # Run in thread pool to avoid blocking
@@ -112,26 +115,26 @@ class YouTubeService:
             )
             
             if not result:
-                print(f"❌ [YouTube] Apify actor returned no results")
+                logger.error(f"❌ [YouTube] Apify actor returned no results")
                 return None
 
             # Parse the result
             video_info = self._parse_apify_result(result, video_id)
             
             if video_info:
-                print(f"✅ [YouTube] Video info fetched: {video_info.title[:50]}...")
-                print(f"   Duration: {video_info.duration}, Has Captions: {video_info.has_captions}")
+                logger.info(f"✅ [YouTube] Video info fetched: {video_info.title[:50]}...")
+                logger.info(f"   Duration: {video_info.duration}, Has Captions: {video_info.has_captions}")
             
             return video_info
 
         except Exception as e:
-            print(f"❌ [YouTube] Error fetching video info: {e}")
+            logger.error(f"❌ [YouTube] Error fetching video info: {e}")
             return None
 
     def _run_apify_actor(self, url: str) -> Optional[dict]:
         """Run Apify YouTube scraper actor synchronously."""
         try:
-            print(f"🔍 [Apify] Running actor: {self.YOUTUBE_ACTOR}")
+            logger.info(f"🔍 [Apify] Running actor: {self.YOUTUBE_ACTOR}")
             
             # Input for streamers/youtube-scraper
             # Note: subtitlesLanguage only supports: "any", "en", "de", "es", "fr", "it", "ja", "ko", "nl", "pt", "ru"
@@ -148,27 +151,27 @@ class YouTubeService:
             
             # Poll for status
             run_id = run.get("id")
-            print(f"[{self.YOUTUBE_ACTOR} runId:{run_id}] -> Status: {run.get('status')}")
+            logger.info(f"[{self.YOUTUBE_ACTOR} runId:{run_id}] -> Status: {run.get('status')}")
             
             # Get results from dataset
             items = list(self.client.dataset(run["defaultDatasetId"]).iterate_items())
             
             if items:
-                print(f"✅ [Apify] Got {len(items)} result(s)")
+                logger.info(f"✅ [Apify] Got {len(items)} result(s)")
                 return items[0]
             else:
-                print(f"⚠️ [Apify] No items in dataset")
+                logger.warning(f"⚠️ [Apify] No items in dataset")
                 return None
                 
         except Exception as e:
-            print(f"❌ [Apify] Actor error: {e}")
+            logger.error(f"❌ [Apify] Actor error: {e}")
             return None
 
     def _parse_apify_result(self, item: dict, video_id: str) -> Optional[YouTubeVideoInfo]:
         """Parse Apify result to YouTubeVideoInfo."""
         try:
             # Debug output
-            print(f"🐛 [Debug] Apify item keys: {list(item.keys())}")
+            logger.debug(f"🐛 Apify item keys: {list(item.keys())}")
             
             # Extract basic info
             title = item.get("title", "Unknown Title")
@@ -196,7 +199,7 @@ class YouTubeService:
                     if srt_content:
                         captions = self._parse_srt_to_text(srt_content)
                         has_captions = bool(captions)
-                        print(f"   Found {best_subtitle.get('language')} subtitles: {len(captions)} chars")
+                        logger.info(f"   Found {best_subtitle.get('language')} subtitles: {len(captions)} chars")
             
             return YouTubeVideoInfo(
                 video_id=video_id,
@@ -213,7 +216,7 @@ class YouTubeService:
             )
             
         except Exception as e:
-            print(f"❌ [YouTube] Error parsing result: {e}")
+            logger.error(f"❌ [YouTube] Error parsing result: {e}")
             return None
 
     def _find_best_subtitle(self, subtitles: list) -> Optional[dict]:

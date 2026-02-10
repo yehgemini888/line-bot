@@ -16,6 +16,9 @@ from apify_client import ApifyClient
 from src.domain.content import SocialPlatform
 from src.usecase.summarize import SocialScrapeResult
 
+import logging
+logger = logging.getLogger(__name__)
+
 # Thread pool for running sync Apify calls
 _executor = ThreadPoolExecutor(max_workers=3)
 
@@ -104,7 +107,7 @@ class ApifyScraper:
         if "/share/" not in url and "fb.watch" not in url:
             return url
 
-        print(f"🔄 [Apify] Resolving redirect for share URL: {url}")
+        logger.info(f"🔄 [Apify] Resolving redirect for share URL: {url}")
         try:
             async with httpx.AsyncClient(follow_redirects=True) as client:
                 response = await client.head(url, timeout=10.0)
@@ -116,13 +119,13 @@ class ApifyScraper:
                 
                 # Check if redirected to login page - this is the key fix!
                 if "/login/" in final_url or "login.php" in final_url:
-                    print(f"⚠️ [Apify] Redirect led to login page, extracting story_fbid...")
+                    logger.warning(f"⚠️ [Apify] Redirect led to login page, extracting story_fbid...")
                     canonical_url = self._extract_canonical_url_from_login(final_url, url)
                     if canonical_url:
-                        print(f"✅ [Apify] Constructed canonical URL: {canonical_url}")
+                        logger.info(f"✅ [Apify] Constructed canonical URL: {canonical_url}")
                         return canonical_url
                     else:
-                        print(f"❌ [Apify] Could not extract story_fbid from login URL")
+                        logger.error(f"❌ [Apify] Could not extract story_fbid from login URL")
                         return url  # Fallback to original
                 
                 # Remove query parameters from resolved URL to clean it up
@@ -132,10 +135,10 @@ class ApifyScraper:
                     if any(p in base_url for p in ["/posts/", "/videos/", "/reel/", "/watch"]):
                         final_url = base_url
                 
-                print(f"✅ [Apify] Resolved URL: {final_url}")
+                logger.info(f"✅ [Apify] Resolved URL: {final_url}")
                 return final_url
         except Exception as e:
-            print(f"⚠️ [Apify] Failed to resolve URL redirect: {e}")
+            logger.warning(f"⚠️ [Apify] Failed to resolve URL redirect: {e}")
             return url
 
     def _extract_canonical_url_from_login(self, login_url: str, original_url: str) -> Optional[str]:
@@ -167,7 +170,7 @@ class ApifyScraper:
             next_url = unquote(next_url)
             next_url = unquote(next_url)  # Double decode for safety
             
-            print(f"🔍 [Apify] Decoded next URL: {next_url[:100]}...")
+            logger.info(f"🔍 [Apify] Decoded next URL: {next_url[:100]}...")
             
             # Extract story_fbid from the next URL
             story_fbid = None
@@ -190,10 +193,10 @@ class ApifyScraper:
                     story_fbid = v_match.group(1)
             
             if not story_fbid:
-                print(f"⚠️ [Apify] No story_fbid found in: {next_url[:200]}")
+                logger.warning(f"⚠️ [Apify] No story_fbid found in: {next_url[:200]}")
                 return None
             
-            print(f"✅ [Apify] Extracted story_fbid: {story_fbid}")
+            logger.info(f"✅ [Apify] Extracted story_fbid: {story_fbid}")
             
             # Determine URL format based on original share URL type
             if "/share/v/" in original_url:
@@ -207,7 +210,7 @@ class ApifyScraper:
                 return f"https://www.facebook.com/{story_fbid}"
                 
         except Exception as e:
-            print(f"⚠️ [Apify] Error extracting canonical URL: {e}")
+            logger.warning(f"⚠️ [Apify] Error extracting canonical URL: {e}")
             return None
 
     async def _scrape_facebook(self, url: str) -> SocialScrapeResult:
@@ -233,8 +236,8 @@ class ApifyScraper:
             "maxRequestRetries": 1,  # Reduce from default 3 to speed up
         }
 
-        print(f"🔍 [Apify] Scraping Facebook post: {url}")
-        print(f"🔍 [Apify] Using actor: {actor_id}")
+        logger.info(f"🔍 [Apify] Scraping Facebook post: {url}")
+        logger.info(f"🔍 [Apify] Using actor: {actor_id}")
 
         # Run the sync Apify client in thread pool to avoid blocking event loop
         loop = asyncio.get_running_loop()
@@ -250,7 +253,7 @@ class ApifyScraper:
         )
 
         if not items:
-            print("⚠️ [Apify] No items returned in dataset")
+            logger.warning("⚠️ [Apify] No items returned in dataset")
             return SocialScrapeResult(
                 platform=SocialPlatform.FACEBOOK,
                 url=url,
@@ -263,14 +266,14 @@ class ApifyScraper:
             )
 
         item = items[0]
-        print(f"🐛 [Debug] Facebook Item Keys: {list(item.keys())}")
-        print(f"🐛 [Debug] Facebook Item: {item}")
+        logger.debug(f"🐛 [Apify] Facebook Item Keys: {list(item.keys())}")
+        logger.debug(f"🐛 [Apify] Facebook Item: {item}")
 
         # Check if Apify returned an error object (e.g. blocked, private content)
         if "error" in item:
             error_type = item.get("error", "unknown")
             error_desc = item.get("errorDescription", "Unknown error")
-            print(f"⚠️ [Apify] Facebook scraper returned error: {error_type} - {error_desc}")
+            logger.warning(f"⚠️ [Apify] Facebook scraper returned error: {error_type} - {error_desc}")
             
             # Determine content type from URL for better user message
             content_type = "貼文"
@@ -294,7 +297,7 @@ class ApifyScraper:
         # Check if this is a Photo type (different structure than Post)
         item_type = item.get("__typename", "")
         is_photo = item_type == "Photo"
-        print(f"🐛 [Debug] Facebook Item Type: {item_type}, Is Photo: {is_photo}")
+        logger.debug(f"🐛 [Apify] Facebook Item Type: {item_type}, Is Photo: {is_photo}")
 
         # For Photo type, try to get the original post URL and re-scrape
         if is_photo:
@@ -306,7 +309,7 @@ class ApifyScraper:
                 original_post_url = item["creation_story"].get("url")
 
             if original_post_url and original_post_url != url:
-                print(f"🔄 [Apify] Photo detected, re-scraping original post: {original_post_url}")
+                logger.info(f"🔄 [Apify] Photo detected, re-scraping original post: {original_post_url}")
 
                 # Extract engagement data from Photo as fallback (in case re-scrape fails)
                 photo_likes = None
@@ -388,7 +391,7 @@ class ApifyScraper:
         # For Photo type, extract engagement from feedback object
         if is_photo and "feedback" in item:
             feedback = item["feedback"]
-            print(f"🐛 [Debug] Facebook Photo feedback: {feedback}")
+            logger.debug(f"🐛 [Apify] Facebook Photo feedback: {feedback}")
 
             # Extract likes/reactions from feedback
             if not likes:
@@ -412,17 +415,18 @@ class ApifyScraper:
                     feedback.get("shares", {}).get("count")
                 )
 
-        print(f"🐛 [Debug] Facebook engagement - Likes: {likes}, Comments: {comments}, Shares: {shares}")
+        logger.debug(f"🐛 [Apify] Facebook engagement - Likes: {likes}, Comments: {comments}, Shares: {shares}")
 
         # Check if we got any content
         if not text_content:
-            print(f"⚠️ [Apify] Facebook post has no text content. Full item: {item}")
+            logger.warning(f"⚠️ [Apify] Facebook post has no text content")
+            logger.debug(f"Full item: {item}")
             # For Photo type, it's okay to have no text - use placeholder
             if is_photo:
                 text_content = "[Facebook 圖片貼文]"
-                print(f"📷 [Apify] Photo type detected, using placeholder text")
+                logger.info(f"📷 [Apify] Photo type detected, using placeholder text")
 
-        print(f"✅ [Apify] Successfully scraped Facebook post. Text length: {len(str(text_content))}, Type: {item_type}")
+        logger.info(f"✅ [Apify] Successfully scraped Facebook post. Text length: {len(str(text_content))}, Type: {item_type}")
 
         return SocialScrapeResult(
             platform=SocialPlatform.FACEBOOK,
@@ -460,8 +464,8 @@ class ApifyScraper:
             "maxReplies": 0,  # We only need the main post, not replies
         }
 
-        print(f"🔍 [Apify] Scraping Threads post: {url}")
-        print(f"🔍 [Apify] Using actor: {actor_id}")
+        logger.info(f"🔍 [Apify] Scraping Threads post: {url}")
+        logger.info(f"🔍 [Apify] Using actor: {actor_id}")
 
         # Run the sync Apify client in thread pool to avoid blocking event loop
         loop = asyncio.get_running_loop()
@@ -477,7 +481,7 @@ class ApifyScraper:
         )
 
         if not items:
-            print("⚠️ [Apify] No items returned from Threads scraper")
+            logger.warning("⚠️ [Apify] No items returned from Threads scraper")
             return SocialScrapeResult(
                 platform=SocialPlatform.THREADS,
                 url=url,
@@ -491,8 +495,8 @@ class ApifyScraper:
 
         # Log for debugging
         item = items[0]
-        print(f"🐛 [Debug] Threads Item Keys: {list(item.keys())}")
-        print(f"🐛 [Debug] Threads Item: {item}")
+        logger.debug(f"🐛 [Apify] Threads Item Keys: {list(item.keys())}")
+        logger.debug(f"🐛 [Apify] Threads Item: {item}")
 
         # Extract text content - sinam7/threads-post-scraper uses 'content' field
         text_content = (
@@ -529,8 +533,8 @@ class ApifyScraper:
             if len(extracted_numbers) >= 2:
                 extracted_shares = extracted_numbers[1]
 
-            print(f"🐛 [Debug] Extracted numbers from content: {extracted_numbers}")
-            print(f"🐛 [Debug] Likes: {extracted_likes}, Shares: {extracted_shares}")
+            logger.debug(f"🐛 [Apify] Extracted numbers from content: {extracted_numbers}")
+            logger.debug(f"🐛 [Apify] Likes: {extracted_likes}, Shares: {extracted_shares}")
 
         # Clean up the content - remove metadata mixed in by the scraper
         # The scraper often includes: username, time, "Translate", like counts at the end
@@ -599,11 +603,12 @@ class ApifyScraper:
             item.get("shares") or
             extracted_shares  # Fallback to shares extracted from content
         )
-        print(f"🐛 [Debug] Engagement metrics - Likes: {likes}, Replies: {replies}, Shares: {shares}")
+        logger.debug(f"🐛 [Apify] Engagement metrics - Likes: {likes}, Replies: {replies}, Shares: {shares}")
 
         # Check if we actually got content
         if not text_content:
-            print(f"⚠️ [Apify] Threads post has no text content. Full item: {item}")
+            logger.warning(f"⚠️ [Apify] Threads post has no text content")
+            logger.debug(f"Full item: {item}")
             return SocialScrapeResult(
                 platform=SocialPlatform.THREADS,
                 url=url,
@@ -616,7 +621,7 @@ class ApifyScraper:
                 error_message="Post has no text content (may be image/video only)"
             )
 
-        print(f"✅ [Apify] Successfully scraped Threads post. Text length: {len(str(text_content))}")
+        logger.info(f"✅ [Apify] Successfully scraped Threads post. Text length: {len(str(text_content))}")
 
         return SocialScrapeResult(
             platform=SocialPlatform.THREADS,

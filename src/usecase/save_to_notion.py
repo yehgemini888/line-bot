@@ -104,7 +104,9 @@ class SaveToNotionUseCase:
             comments=content.comments,
             shares=content.shares,
             video_duration=getattr(content, 'video_duration', None),
-            channel_name=getattr(content, 'channel_name', None)
+            channel_name=getattr(content, 'channel_name', None),
+            file_url=getattr(content, 'file_url', None),
+            file_name=getattr(content, 'file_name', None)
         )
 
         if not result.success:

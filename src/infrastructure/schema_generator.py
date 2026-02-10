@@ -10,9 +10,12 @@ AI 會以指定角色的視角分析內容，決定最佳的輸出格式。
 """
 
 import json
+import logging
 from typing import Protocol, Dict, Tuple, Optional
 
 from src.infrastructure.output_schemas import DEFAULT_SCHEMA
+
+logger = logging.getLogger(__name__)
 
 
 class AIServiceProtocol(Protocol):
@@ -143,7 +146,7 @@ class SchemaGenerator:
             生成的 JSON Schema
         """
         try:
-            print(f"🔄 [SchemaGenerator] 分析角色+內容，生成最佳 Schema...")
+            logger.info(f"🔄 [SchemaGenerator] 分析角色+內容，生成最佳 Schema...")
 
             # 截取內容預覽（避免太長）
             content_preview = content[:500] + "..." if len(content) > 500 else content
@@ -163,12 +166,12 @@ class SchemaGenerator:
             # 確保包含基礎欄位
             schema = self._ensure_base_fields(schema)
 
-            print(f"✅ [SchemaGenerator] Schema 生成成功: {list(schema.get('properties', {}).keys())}")
+            logger.info(f"✅ [SchemaGenerator] Schema 生成成功: {list(schema.get('properties', {}).keys())}")
             return schema
 
         except Exception as e:
-            print(f"❌ [SchemaGenerator] Schema 生成失敗: {e}")
-            print(f"⚠️ [SchemaGenerator] 使用預設 Schema")
+            logger.error(f"❌ [SchemaGenerator] Schema 生成失敗: {e}")
+            logger.warning(f"⚠️ [SchemaGenerator] 使用預設 Schema")
             return DEFAULT_SCHEMA
 
     async def classify_and_generate_schema(
@@ -189,7 +192,7 @@ class SchemaGenerator:
             Tuple[category, schema]: 分類結果和動態生成的 Schema
         """
         try:
-            print(f"🔄 [SchemaGenerator] 合併分類+Schema 生成...")
+            logger.info(f"🔄 [SchemaGenerator] 合併分類+Schema 生成...")
 
             # 構建模板描述
             templates_desc = self._build_templates_description(templates)
@@ -214,12 +217,12 @@ class SchemaGenerator:
             # 確保 Schema 包含基礎欄位
             schema = self._ensure_base_fields(schema)
 
-            print(f"✅ [SchemaGenerator] 合併結果: 分類={category}, Schema 欄位={list(schema.get('properties', {}).keys())}")
+            logger.info(f"✅ [SchemaGenerator] 合併結果: 分類={category}, Schema 欄位={list(schema.get('properties', {}).keys())}")
             return category, schema
 
         except Exception as e:
-            print(f"❌ [SchemaGenerator] 合併分類+Schema 失敗: {e}")
-            print(f"⚠️ [SchemaGenerator] 回退到 lifestyle + 預設 Schema")
+            logger.error(f"❌ [SchemaGenerator] 合併分類+Schema 失敗: {e}")
+            logger.warning(f"⚠️ [SchemaGenerator] 回退到 lifestyle + 預設 Schema")
             return "lifestyle", DEFAULT_SCHEMA
 
     def _build_templates_description(self, templates: Dict[str, object]) -> str:

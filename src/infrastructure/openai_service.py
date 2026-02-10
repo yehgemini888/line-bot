@@ -5,9 +5,12 @@ Handles AI summarization and image analysis using OpenAI GPT models.
 """
 
 import base64
+import logging
 from openai import AsyncOpenAI
 from typing import List, Optional
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -108,7 +111,7 @@ class OpenAIService:
             )
 
         except Exception as e:
-            print(f"❌ [OpenAI] Summarization failed: {e}")
+            logger.error(f"❌ [OpenAI] Summarization failed: {e}")
             return SummaryResult(
                 title="Error",
                 summary="",
@@ -142,7 +145,7 @@ class OpenAIService:
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            print(f"❌ [OpenAI] generate_simple error: {e}")
+            logger.error(f"❌ [OpenAI] generate_simple error: {e}")
             return ""
 
     async def summarize_with_schema(
@@ -189,8 +192,8 @@ class OpenAIService:
 請根據上述指示進行分析。"""
         
         try:
-            print(f"🎯 [OpenAI] 使用 Structured Output API")
-            print(f"📋 [OpenAI] Schema 欄位: {list(schema.get('properties', {}).keys())}")
+            logger.info(f"🎯 [OpenAI] 使用 Structured Output API")
+            logger.info(f"📋 [OpenAI] Schema 欄位: {list(schema.get('properties', {}).keys())}")
             
             # OpenAI Strict Mode: 每一層 object 都需要 additionalProperties: false 和完整 required
             openai_schema = self._enforce_strict_schema(dict(schema))
@@ -216,15 +219,15 @@ class OpenAIService:
             
             # 解析 JSON 回應
             result = json.loads(response.choices[0].message.content)
-            print(f"✅ [OpenAI] Structured Output 成功")
+            logger.info(f"✅ [OpenAI] Structured Output 成功")
             
             return result
             
         except json.JSONDecodeError as e:
-            print(f"❌ [OpenAI] JSON 解析失敗: {e}")
+            logger.error(f"❌ [OpenAI] JSON 解析失敗: {e}")
             raise
         except Exception as e:
-            print(f"❌ [OpenAI] Structured Output 失敗: {e}")
+            logger.error(f"❌ [OpenAI] Structured Output 失敗: {e}")
             raise
 
     async def analyze_image(
@@ -272,7 +275,7 @@ class OpenAIService:
             result_text = response.choices[0].message.content
             parsed = self._parse_image_response(result_text)
 
-            print(f"🔍 [OpenAI Vision] Analysis complete: {parsed['title']}")
+            logger.info(f"🔍 [OpenAI Vision] Analysis complete: {parsed['title']}")
 
             return ImageAnalysisResult(
                 title=parsed["title"],
@@ -282,7 +285,7 @@ class OpenAIService:
             )
 
         except Exception as e:
-            print(f"❌ [OpenAI Vision] Analysis failed: {e}")
+            logger.error(f"❌ [OpenAI Vision] Analysis failed: {e}")
             return ImageAnalysisResult(
                 title="Error",
                 description="",
@@ -304,7 +307,7 @@ class OpenAIService:
 
         # Use custom prompt if provided
         if custom_prompt:
-            print(f"🎯 [OpenAI] Using custom prompt: {custom_prompt[:50]}...")
+            logger.info(f"🎯 [OpenAI] Using custom prompt: {custom_prompt[:50]}...")
             return f"""{custom_prompt}
 
 ---

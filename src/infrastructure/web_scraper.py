@@ -5,10 +5,14 @@ Fetches and extracts text content from URLs.
 Includes Jina Reader fallback for SPA/JavaScript-rendered sites.
 """
 
+import logging
+
 import httpx
 from bs4 import BeautifulSoup
 from typing import Optional
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -65,14 +69,14 @@ class WebScraper:
         
         # Step 2: If content is too short, try Jina Reader fallback
         if result.success and len(result.text_content) < self.MIN_CONTENT_LENGTH:
-            print(f"⚠️ [Scraper] Content too short ({len(result.text_content)} chars), trying Jina Reader...")
+            logger.warning(f"⚠️ [Scraper] Content too short ({len(result.text_content)} chars), trying Jina Reader...")
             jina_result = await self._scrape_via_jina(url)
             if jina_result.success:
                 return jina_result
         
         # Step 3: If direct scraping failed, try Jina Reader
         if not result.success:
-            print(f"⚠️ [Scraper] Direct scraping failed, trying Jina Reader...")
+            logger.warning(f"⚠️ [Scraper] Direct scraping failed, trying Jina Reader...")
             jina_result = await self._scrape_via_jina(url)
             if jina_result.success:
                 return jina_result
@@ -163,7 +167,7 @@ class WebScraper:
                     title = lines[0][2:].strip()
                     text_content = '\n'.join(lines[1:]).strip()
                 
-                print(f"✅ [Jina] Successfully fetched: {title[:50] if title else 'No title'}...")
+                logger.info(f"✅ [Jina] Successfully fetched: {title[:50] if title else 'No title'}...")
                 
                 return ScrapedContent(
                     url=url,
@@ -174,7 +178,7 @@ class WebScraper:
                 )
 
         except Exception as e:
-            print(f"❌ [Jina] Failed: {e}")
+            logger.error(f"❌ [Jina] Failed: {e}")
             return ScrapedContent(
                 url=url,
                 title=None,

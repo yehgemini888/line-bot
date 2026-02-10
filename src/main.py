@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from linebot.v3.webhook import WebhookParser
-from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, AudioMessageContent
+from linebot.v3.webhooks import MessageEvent, TextMessageContent, ImageMessageContent, AudioMessageContent, FileMessageContent
 from linebot.v3.exceptions import InvalidSignatureError
 
 # Load environment variables
@@ -31,6 +31,7 @@ from src.infrastructure.drive_service import GoogleDriveService
 from src.infrastructure.youtube_service import YouTubeService
 from src.infrastructure.telegram_handler import TelegramHandler
 from src.infrastructure.whisper_service import WhisperService
+from src.infrastructure.document_extractor import DocumentExtractor
 
 # UseCase imports
 from src.usecase.summarize import SummarizeUseCase
@@ -39,6 +40,10 @@ from src.usecase.process_image import ProcessImageUseCase
 
 # Domain imports
 from src.domain.content import ContentType
+
+import logging
+from src.infrastructure.logging_config import setup_logging
+logger = logging.getLogger(__name__)
 
 
 # Configuration
@@ -128,7 +133,7 @@ def get_process_image_usecase() -> ProcessImageUseCase:
                 repository=notion_repo
             )
         except Exception as e:
-            print(f"⚠️ Image processing init failed, disabling: {e}")
+            logger.warning(f"⚠️ Image processing init failed, disabling: {e}")
             _image_enabled = False
     return _process_image_usecase
 
@@ -164,7 +169,13 @@ def get_handler() -> LineMessageHandler:
         whisper_service = None
         if OPENAI_API_KEY:
             whisper_service = WhisperService(api_key=OPENAI_API_KEY)
-            print("🎙️ Whisper service: ENABLED")
+            logger.info("🎙️ Whisper service: ENABLED")
+
+        # Drive service and Document extractor
+        drive_service = None
+        if process_image_usecase:
+            drive_service = process_image_usecase.image_uploader
+        document_extractor = DocumentExtractor()
 
         # Handler
         _handler = LineMessageHandler(
@@ -176,7 +187,9 @@ def get_handler() -> LineMessageHandler:
             process_image_usecase=process_image_usecase,
             youtube_service=youtube_service,
             ai_service=ai_service,
-            whisper_service=whisper_service
+            whisper_service=whisper_service,
+            drive_service=drive_service,
+            document_extractor=document_extractor
         )
     return _handler
 
@@ -226,6 +239,9 @@ def get_telegram_handler() -> TelegramHandler:
         if process_image_usecase:
             drive_service = process_image_usecase.image_uploader
 
+        # Document extractor
+        document_extractor = DocumentExtractor()
+
         # Telegram Handler
         _telegram_handler = TelegramHandler(
             bot_token=TELEGRAM_BOT_TOKEN,
@@ -237,7 +253,8 @@ def get_telegram_handler() -> TelegramHandler:
             ai_service=ai_service,
             whisper_service=whisper_service,
             process_image_usecase=process_image_usecase,
-            drive_service=drive_service
+            drive_service=drive_service,
+            document_extractor=document_extractor
         )
     return _telegram_handler
 
@@ -250,9 +267,9 @@ def restore_google_token():
         try:
             with open(token_path, "w") as f:
                 f.write(base64.b64decode(token_b64).decode("utf-8"))
-            print(f"☁️ Google token restored to {token_path}")
+            logger.info(f"☁️ Google token restored to {token_path}")
         except Exception as e:
-            print(f"❌ Failed to restore Google token: {e}")
+            logger.error(f"❌ Failed to restore Google token: {e}")
 
 def restore_google_credentials():
     """Restore credentials.json from Base64 environment variable (for cloud deployment)."""
@@ -280,10 +297,10 @@ def restore_google_credentials():
                 
             GOOGLE_SERVICE_ACCOUNT_FILE = creds_path
             os.environ["GOOGLE_SERVICE_ACCOUNT_FILE"] = creds_path
-            print(f"☁️ Google credentials restored and sanitized at {creds_path}")
+            logger.info(f"☁️ Google credentials restored and sanitized at {creds_path}")
             
         except Exception as e:
-            print(f"❌ Failed to restore Google credentials: {e}")
+            logger.error(f"❌ Failed to restore Google credentials: {e}")
 
 
 @asynccontextmanager
@@ -291,30 +308,31 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     global _image_enabled
     # Startup
+    setup_logging(os.getenv("LOG_LEVEL", "INFO"))
     restore_google_credentials()
     restore_google_token()
     validate_config()
-    print("🚀 Line Bot Content Saver started!")
-    print(f"📦 Notion Database ID: {NOTION_DATABASE_ID[:8]}...")
+    logger.info("🚀 Line Bot Content Saver started!")
+    logger.info(f"📦 Notion Database ID: {NOTION_DATABASE_ID[:8]}...")
     if NOTION_TEMPLATE_DATABASE_ID:
-        print(f"📋 Notion Template DB: {NOTION_TEMPLATE_DATABASE_ID[:8]}...")
+        logger.info(f"📋 Notion Template DB: {NOTION_TEMPLATE_DATABASE_ID[:8]}...")
     else:
-        print("⚠️ Notion Template DB: NOT CONFIGURED (using defaults)")
-    print(f"🤖 AI Provider: {AI_PROVIDER.upper()}")
+        logger.warning("⚠️ Notion Template DB: NOT CONFIGURED (using defaults)")
+    logger.info(f"🤖 AI Provider: {AI_PROVIDER.upper()}")
 
     # Check if image processing is configured
     if GOOGLE_SERVICE_ACCOUNT_FILE and GOOGLE_DRIVE_FOLDER_ID:
         if os.path.exists(GOOGLE_SERVICE_ACCOUNT_FILE):
             _image_enabled = True
-            print("🖼️ Image processing: ENABLED")
+            logger.info("🖼️ Image processing: ENABLED")
         else:
-            print(f"⚠️ Image processing: DISABLED (service account file not found: {GOOGLE_SERVICE_ACCOUNT_FILE})")
+            logger.warning(f"⚠️ Image processing: DISABLED (service account file not found: {GOOGLE_SERVICE_ACCOUNT_FILE})")
     else:
-        print("⚠️ Image processing: DISABLED (missing GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_DRIVE_FOLDER_ID)")
+        logger.warning("⚠️ Image processing: DISABLED (missing GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_DRIVE_FOLDER_ID)")
 
     yield
     # Shutdown
-    print("👋 Shutting down...")
+    logger.info("👋 Shutting down...")
 
 
 # Create FastAPI app
@@ -345,22 +363,22 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
     body_str = body.decode("utf-8")
     signature = request.headers.get("X-Line-Signature", "")
 
-    print(f"📥 Webhook received (body: {len(body_str)} bytes)")
+    logger.info(f"📥 Webhook received (body: {len(body_str)} bytes)")
 
     # Parse events (fast operation)
     parser = get_parser()
     try:
         events = parser.parse(body_str, signature)
     except InvalidSignatureError:
-        print("❌ Invalid signature")
+        logger.error("❌ Invalid signature")
         raise HTTPException(status_code=400, detail="Invalid signature")
     except Exception as e:
-        print(f"❌ Error parsing webhook events: {e}")
+        logger.error(f"❌ Error parsing webhook events: {e}")
         # Return 200 OK to Line even if parsing fails to avoid retry storms
         return {"status": "ok", "error": str(e)}
 
     # Queue events for background processing (don't initialize handler here)
-    print(f"📋 Received {len(events)} events")
+    logger.info(f"📋 Received {len(events)} events")
     for event in events:
         if isinstance(event, MessageEvent):
             if isinstance(event.message, TextMessageContent):
@@ -387,6 +405,16 @@ async def webhook(request: Request, background_tasks: BackgroundTasks):
                     message_id=event.message.id,
                     reply_token=event.reply_token
                 )
+            elif isinstance(event.message, FileMessageContent):
+                # Process file/document message in background
+                background_tasks.add_task(
+                    process_file_message,
+                    user_id=event.source.user_id,
+                    message_id=event.message.id,
+                    file_name=event.message.file_name,
+                    file_size=event.message.file_size,
+                    reply_token=event.reply_token
+                )
 
     # Return immediately - Line requires fast response
     return {"status": "ok"}
@@ -409,7 +437,7 @@ async def process_message(
     handler = get_handler()
 
     try:
-        print(f"⚙️ Processing message from {user_id}: {text[:50]}...")
+        logger.info(f"⚙️ Processing message from {user_id}: {text[:50]}...")
 
         # Check if text contains an image URL
         content_type, _, image_url = handler._analyze_content(text)
@@ -424,10 +452,10 @@ async def process_message(
         # Send result via push message
         await handler.push_message(user_id, result)
 
-        print(f"✅ Message processed successfully for {user_id}")
+        logger.info(f"✅ Message processed successfully for {user_id}")
 
     except Exception as e:
-        print(f"❌ Error processing message: {e}")
+        logger.error(f"❌ Error processing message: {e}")
         error_msg = f"❌ 發生錯誤：{str(e)}"
         await handler.push_message(user_id, error_msg)
 
@@ -449,7 +477,7 @@ async def process_image_message(
     handler = get_handler()
 
     try:
-        print(f"📸 Processing image from {user_id} (message_id: {message_id})")
+        logger.info(f"📸 Processing image from {user_id} (message_id: {message_id})")
 
         # Process image
         result = await handler.handle_image_message_with_push(user_id, message_id)
@@ -457,10 +485,10 @@ async def process_image_message(
         # Send result via push message
         await handler.push_message(user_id, result)
 
-        print(f"✅ Image processed successfully for {user_id}")
+        logger.info(f"✅ Image processed successfully for {user_id}")
 
     except Exception as e:
-        print(f"❌ Error processing image: {e}")
+        logger.error(f"❌ Error processing image: {e}")
         error_msg = f"❌ 發生錯誤：{str(e)}"
         await handler.push_message(user_id, error_msg)
 
@@ -481,7 +509,7 @@ async def process_audio_message(
     handler = get_handler()
 
     try:
-        print(f"🎙️ Processing audio from {user_id}: {message_id}")
+        logger.info(f"🎙️ Processing audio from {user_id}: {message_id}")
 
         # Send processing message
         await handler.push_message(user_id, "收到語音訊息！正在轉錄中... 🎙️")
@@ -492,11 +520,52 @@ async def process_audio_message(
         # Send result via push message
         await handler.push_message(user_id, result)
 
-        print(f"✅ Audio processed successfully for {user_id}")
+        logger.info(f"✅ Audio processed successfully for {user_id}")
 
     except Exception as e:
-        print(f"❌ Error processing audio: {e}")
+        logger.error(f"❌ Error processing audio: {e}")
         error_msg = f"❌ 處理語音訊息時發生錯誤：{str(e)}"
+        await handler.push_message(user_id, error_msg)
+
+
+async def process_file_message(
+    user_id: str,
+    message_id: str,
+    file_name: str,
+    file_size: int,
+    reply_token: str
+):
+    """
+    Process file/document message in background.
+
+    Args:
+        user_id: User ID for push message
+        message_id: Line message ID containing the file
+        file_name: Original file name
+        file_size: File size in bytes
+        reply_token: Reply token (may expire)
+    """
+    handler = get_handler()
+
+    try:
+        logger.info(f"📄 Processing file from {user_id}: {file_name} ({file_size} bytes)")
+
+        # Send processing message
+        await handler.push_message(user_id, f"收到文件：{file_name}\n正在處理中... 📄")
+
+        # Process file
+        result = await handler.handle_file_message_with_push(
+            user_id, message_id, file_name, file_size
+        )
+
+        # Send result via push message
+        await handler.push_message(user_id, result)
+
+        logger.info(f"✅ File processed successfully for {user_id}")
+
+    except Exception as e:
+        logger.error(f"❌ Error processing file: {e}")
+        error_msg = f"❌ 處理文件時發生錯誤：{str(e)}"
         await handler.push_message(user_id, error_msg)
 
 
@@ -514,14 +583,14 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
     """
     try:
         update = await request.json()
-        print(f"📩 [Telegram] Webhook received")
+        logger.info(f"📩 [Telegram] Webhook received")
 
         # Process in background
         background_tasks.add_task(process_telegram_update, update)
 
         return {"status": "ok"}
     except Exception as e:
-        print(f"❌ [Telegram] Webhook error: {e}")
+        logger.error(f"❌ [Telegram] Webhook error: {e}")
         return {"status": "ok", "error": str(e)}
 
 
@@ -530,13 +599,13 @@ async def process_telegram_update(update: dict):
     handler = get_telegram_handler()
 
     if handler is None:
-        print("❌ [Telegram] Handler not initialized (missing TELEGRAM_BOT_TOKEN)")
+        logger.error("❌ [Telegram] Handler not initialized (missing TELEGRAM_BOT_TOKEN)")
         return
 
     try:
         await handler.handle_update(update)
     except Exception as e:
-        print(f"❌ [Telegram] Error processing update: {e}")
+        logger.error(f"❌ [Telegram] Error processing update: {e}")
 
 
 if __name__ == "__main__":

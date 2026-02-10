@@ -26,6 +26,7 @@ class ContentType(Enum):
     IMAGE = "image"
     YOUTUBE = "youtube"
     AUDIO = "audio"  # Voice messages
+    FILE = "file"    # Documents (PDF, DOCX, XLSX, PPTX, CSV, TXT)
 
 
 @dataclass
@@ -65,6 +66,8 @@ class Content:
     image_description: Optional[str] = None
     video_duration: Optional[str] = None  # For YouTube videos (e.g., "10:30")
     channel_name: Optional[str] = None    # For YouTube videos
+    file_url: Optional[str] = None        # For uploaded files (Google Drive link)
+    file_name: Optional[str] = None       # Original file name
 
     def is_url(self) -> bool:
         """Check if content is a URL type."""
@@ -197,4 +200,28 @@ def create_audio_content(
         content_type=ContentType.AUDIO,
         raw_content=transcription,
         video_duration=duration_str  # Reuse this field for audio duration
+    )
+
+
+def create_file_content(
+    file_name: str,
+    extracted_text: str = "",
+    file_url: Optional[str] = None
+) -> Content:
+    """
+    Factory function to create a FILE type content.
+
+    Args:
+        file_name: Original file name
+        extracted_text: Text extracted from the document
+        file_url: Google Drive URL for the uploaded file
+
+    Returns:
+        Content entity with FILE type
+    """
+    return Content(
+        content_type=ContentType.FILE,
+        raw_content=extracted_text,
+        file_name=file_name,
+        file_url=file_url
     )

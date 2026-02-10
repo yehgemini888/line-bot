@@ -6,9 +6,12 @@ Supports both text summarization and image analysis (Vision API).
 """
 
 import base64
+import logging
 import google.generativeai as genai
 from typing import List, Optional
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -102,7 +105,7 @@ class GeminiService:
             response = await self.model.generate_content_async(prompt)
             return response.text.strip()
         except Exception as e:
-            print(f"❌ [Gemini] generate_simple error: {e}")
+            logger.error(f"❌ [Gemini] generate_simple error: {e}")
             return ""
 
     async def summarize_with_schema(
@@ -151,8 +154,8 @@ class GeminiService:
 請根據上述指示進行分析。記得全部使用繁體中文。"""
         
         try:
-            print(f"🎯 [Gemini] 使用 Structured Output API")
-            print(f"📋 [Gemini] Schema 欄位: {list(schema.get('properties', {}).keys())}")
+            logger.info(f"🎯 [Gemini] 使用 Structured Output API")
+            logger.info(f"📋 [Gemini] Schema 欄位: {list(schema.get('properties', {}).keys())}")
             
             # Gemini does not support 'additionalProperties', but OpenAI needs it.
             # Create a copy and remove it for Gemini.
@@ -171,15 +174,15 @@ class GeminiService:
             
             # 解析 JSON 回應
             result = json.loads(response.text)
-            print(f"✅ [Gemini] Structured Output 成功")
+            logger.info(f"✅ [Gemini] Structured Output 成功")
             
             return result
             
         except json.JSONDecodeError as e:
-            print(f"❌ [Gemini] JSON 解析失敗: {e}")
+            logger.error(f"❌ [Gemini] JSON 解析失敗: {e}")
             raise
         except Exception as e:
-            print(f"❌ [Gemini] Structured Output 失敗: {e}")
+            logger.error(f"❌ [Gemini] Structured Output 失敗: {e}")
             raise
 
     def _build_prompt(
@@ -196,7 +199,7 @@ class GeminiService:
 
         # Use custom prompt if provided
         if custom_prompt:
-            print(f"🎯 [Gemini] Using custom prompt: {custom_prompt[:50]}...")
+            logger.info(f"🎯 [Gemini] Using custom prompt: {custom_prompt[:50]}...")
             return f"""{custom_prompt}
 
 ---
@@ -329,7 +332,7 @@ class GeminiService:
             result_text = response.text
             parsed = self._parse_image_response(result_text)
 
-            print(f"🔍 [Gemini Vision] Analysis complete: {parsed['title']}")
+            logger.info(f"🔍 [Gemini Vision] Analysis complete: {parsed['title']}")
 
             return ImageAnalysisResult(
                 title=parsed["title"],
@@ -339,7 +342,7 @@ class GeminiService:
             )
 
         except Exception as e:
-            print(f"❌ [Gemini Vision] Analysis failed: {e}")
+            logger.error(f"❌ [Gemini Vision] Analysis failed: {e}")
             return ImageAnalysisResult(
                 title="Error",
                 description="",

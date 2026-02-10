@@ -4,11 +4,14 @@ UseCase Layer: Process Image
 Orchestrates image upload to Drive, AI analysis, and saving to Notion.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol, Optional, List
 from datetime import datetime
 
 from src.domain.content import Content, create_image_content
+
+logger = logging.getLogger(__name__)
 
 
 # Define interfaces (ports) for dependency injection
@@ -137,7 +140,7 @@ class ProcessImageUseCase:
         Returns:
             ProcessImageResult containing the processed Content entity
         """
-        print(f"📸 [ProcessImage] Starting image processing: {filename}")
+        logger.info(f"📸 [ProcessImage] Starting image processing: {filename}")
 
         # Step 1: Upload image to Google Drive
         upload_result = self.image_uploader.upload_image(
@@ -154,7 +157,7 @@ class ProcessImageUseCase:
             )
 
         drive_url = upload_result.file_url
-        print(f"📤 [ProcessImage] Image uploaded to Drive: {drive_url}")
+        logger.info(f"📤 [ProcessImage] Image uploaded to Drive: {drive_url}")
 
         # Step 2: Analyze image with AI
         analysis_result = await self.image_analyzer.analyze_image(
@@ -169,7 +172,7 @@ class ProcessImageUseCase:
                 error_message=f"圖片分析失敗: {analysis_result.error_message}"
             )
 
-        print(f"🔍 [ProcessImage] Image analyzed: {analysis_result.title}")
+        logger.info(f"🔍 [ProcessImage] Image analyzed: {analysis_result.title}")
 
         # Step 3: Create content entity
         content = create_image_content(
@@ -199,7 +202,7 @@ class ProcessImageUseCase:
                 error_message=f"儲存至 Notion 失敗: {save_result.error_message}"
             )
 
-        print(f"✅ [ProcessImage] Saved to Notion: {save_result.page_url}")
+        logger.info(f"✅ [ProcessImage] Saved to Notion: {save_result.page_url}")
 
         return ProcessImageResult(
             content=content,

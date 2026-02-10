@@ -17,6 +17,10 @@ from src.usecase.save_to_notion import SaveToNotionUseCase
 from src.infrastructure.social_detector import SocialDetector
 from src.infrastructure.image_detector import ImageDetector
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class TelegramUpdate:
@@ -54,7 +58,8 @@ class TelegramHandler:
         ai_service=None,
         whisper_service=None,
         process_image_usecase=None,
-        drive_service=None
+        drive_service=None,
+        document_extractor=None
     ):
         """
         Initialize the handler.
@@ -82,6 +87,7 @@ class TelegramHandler:
         self.whisper_service = whisper_service
         self.process_image_usecase = process_image_usecase
         self.drive_service = drive_service
+        self.document_extractor = document_extractor
 
     def parse_update(self, update: dict) -> Optional[TelegramUpdate]:
         """Parse Telegram update JSON to TelegramUpdate object."""
@@ -106,7 +112,7 @@ class TelegramHandler:
                 message_id=message.get("message_id")
             )
         except Exception as e:
-            print(f"❌ [Telegram] Error parsing update: {e}")
+            logger.error(f"❌ [Telegram] Error parsing update: {e}")
             return None
 
     async def send_message(self, chat_id: int, text: str) -> bool:
@@ -123,7 +129,7 @@ class TelegramHandler:
                 response.raise_for_status()
                 return True
         except Exception as e:
-            print(f"❌ [Telegram] Failed to send message: {e}")
+            logger.error(f"❌ [Telegram] Failed to send message: {e}")
             return False
 
     async def handle_update(self, update: dict) -> None:
@@ -143,7 +149,7 @@ class TelegramHandler:
         # Check for voice message
         voice = message.get("voice")
         if voice:
-            print(f"🎙️ [Telegram] Voice from @{username}")
+            logger.info(f"🎙️ [Telegram] Voice from @{username}")
             await self.send_message(chat_id, "收到語音訊息！正在轉錄中... 🎙️")
             response = await self._handle_voice_message(voice, chat_id)
             await self.send_message(chat_id, response)
@@ -152,9 +158,19 @@ class TelegramHandler:
         # Check for photo message
         photo = message.get("photo")
         if photo:
-            print(f"📸 [Telegram] Photo from @{username}")
+            logger.info(f"📸 [Telegram] Photo from @{username}")
             await self.send_message(chat_id, "收到圖片！正在分析中... 🖼️")
             response = await self._handle_photo_message(photo, message.get("caption", ""), chat_id)
+            await self.send_message(chat_id, response)
+            return
+
+        # Check for document/file message
+        document = message.get("document")
+        if document:
+            file_name = document.get("file_name", "unknown")
+            logger.info(f"📄 [Telegram] Document from @{username}: {file_name}")
+            await self.send_message(chat_id, f"收到文件：{file_name}\n正在處理中... 📄")
+            response = await self._handle_document_message(document, chat_id)
             await self.send_message(chat_id, response)
             return
 
@@ -163,7 +179,7 @@ class TelegramHandler:
         if not parsed:
             return
 
-        print(f"📩 [Telegram] Message from @{parsed.username}: {parsed.text[:50]}...")
+        logger.info(f"📩 [Telegram] Message from @{parsed.username}: {parsed.text[:50]}...")
 
         # Send processing message
         await self.send_message(parsed.chat_id, "收到！正在處理中... ⏳")
@@ -254,7 +270,7 @@ class TelegramHandler:
 
     async def _handle_youtube(self, youtube_url: str) -> str:
         """Handle YouTube URL processing."""
-        print(f"🎬 [YouTube] Processing: {youtube_url}")
+        logger.info(f"🎬 [YouTube] Processing: {youtube_url}")
 
         # Get video info
         video_info = await self.youtube_service.get_video_info(youtube_url)
@@ -358,7 +374,7 @@ class TelegramHandler:
             file_id = voice.get("file_id")
             duration = voice.get("duration", 0)
 
-            print(f"🎙️ [Telegram] Voice file_id: {file_id}, duration: {duration}s")
+            logger.info(f"🎙️ [Telegram] Voice file_id: {file_id}, duration: {duration}s")
 
             # Get file path from Telegram
             file_info = await self._get_file_info(file_id)
@@ -375,7 +391,7 @@ class TelegramHandler:
             if not audio_bytes:
                 return "❌ 無法下載音檔"
 
-            print(f"🎙️ [Telegram] Downloaded {len(audio_bytes)} bytes")
+            logger.info(f"🎙️ [Telegram] Downloaded {len(audio_bytes)} bytes")
 
             # Transcribe with Whisper
             result = await self.whisper_service.transcribe(
@@ -387,7 +403,7 @@ class TelegramHandler:
                 return f"❌ 語音轉文字失敗：{result.error_message}"
 
             transcribed_text = result.text
-            print(f"🎙️ [Telegram] Transcribed: {transcribed_text[:50]}...")
+            logger.info(f"🎙️ [Telegram] Transcribed: {transcribed_text[:50]}...")
 
             # Step 3: Summarize via SummarizeUseCase (NEW - uses template system)
             summarize_result = await self.summarize_usecase.execute(
@@ -419,7 +435,7 @@ class TelegramHandler:
             )
 
         except Exception as e:
-            print(f"❌ [Telegram] Voice error: {e}")
+            logger.error(f"❌ [Telegram] Voice error: {e}")
             return f"❌ 處理語音訊息時發生錯誤：{str(e)}"
 
     async def _get_file_info(self, file_id: str) -> Optional[dict]:
@@ -433,7 +449,7 @@ class TelegramHandler:
                 if data.get("ok"):
                     return data.get("result")
         except Exception as e:
-            print(f"❌ [Telegram] getFile error: {e}")
+            logger.error(f"❌ [Telegram] getFile error: {e}")
         return None
 
     async def _download_file(self, url: str) -> Optional[bytes]:
@@ -444,7 +460,7 @@ class TelegramHandler:
                 response.raise_for_status()
                 return response.content
         except Exception as e:
-            print(f"❌ [Telegram] Download error: {e}")
+            logger.error(f"❌ [Telegram] Download error: {e}")
         return None
 
     def _build_audio_success_response(
@@ -465,6 +481,102 @@ class TelegramHandler:
             template_used=template_used,
             output_format_used=output_format_used
         )
+
+    async def _handle_document_message(self, document: dict, chat_id: int) -> str:
+        """
+        Handle document/file message with text extraction and AI summarization.
+
+        Args:
+            document: Document object from Telegram update
+            chat_id: Chat ID for sending messages
+
+        Returns:
+            Response message string
+        """
+        if not self.document_extractor:
+            return "❌ 文件處理功能未啟用"
+
+        try:
+            file_id = document.get("file_id")
+            file_name = document.get("file_name", "unknown")
+            tg_mime_type = document.get("mime_type", "")
+
+            # Detect MIME from filename (more reliable than Telegram's mime_type)
+            mime_type = self.document_extractor.detect_mime_type(file_name) or tg_mime_type
+
+            if not self.document_extractor.is_supported(mime_type=mime_type, filename=file_name):
+                supported = "PDF, DOCX, XLSX, PPTX, CSV, TXT"
+                return f"❌ 不支援的檔案格式。\n目前支援：{supported}"
+
+            # Step 1: Download file from Telegram
+            file_info = await self._get_file_info(file_id)
+            if not file_info:
+                return "❌ 無法取得檔案資訊"
+
+            file_path = file_info.get("file_path")
+            if not file_path:
+                return "❌ 無法取得檔案路徑"
+
+            file_url_tg = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+            file_data = await self._download_file(file_url_tg)
+            if not file_data:
+                return "❌ 無法下載檔案"
+
+            logger.info(f"📄 [Telegram] Downloaded: {file_name} ({len(file_data)} bytes)")
+
+            # Step 2: Upload to Google Drive (if available)
+            file_url = None
+            if self.drive_service:
+                upload_result = self.drive_service.upload_image(
+                    image_data=file_data,
+                    filename=file_name,
+                    mime_type=mime_type
+                )
+                if upload_result.success:
+                    file_url = upload_result.file_url
+                    logger.info(f"📁 [Telegram] Uploaded to Drive: {file_url}")
+                else:
+                    logger.warning(f"⚠️ [Telegram] Drive upload failed: {upload_result.error_message}")
+
+            # Step 3: Extract text
+            extraction_result = await self.document_extractor.extract(file_data, mime_type, ai_service=self.ai_service)
+            if not extraction_result.success:
+                return f"❌ 文字萃取失敗：{extraction_result.error_message}"
+
+            page_info = f"（共 {extraction_result.page_count} 頁）" if extraction_result.page_count else ""
+            logger.info(f"📄 [Telegram] Extracted {len(extraction_result.text)} chars {page_info}")
+
+            # Step 4: Summarize
+            summarize_result = await self.summarize_usecase.execute(
+                raw_input=extraction_result.text,
+                input_type=ContentType.FILE,
+                file_name=file_name,
+                file_url=file_url,
+                extracted_text=extraction_result.text
+            )
+
+            if not summarize_result.success:
+                return f"❌ 處理失敗：{summarize_result.error_message}"
+
+            content = summarize_result.content
+
+            # Step 5: Save to Notion
+            save_result = await self.save_usecase.execute(content)
+
+            if not save_result.success:
+                return f"❌ 儲存失敗：{save_result.error_message}"
+
+            return ResponseBuilder.build_file_response(
+                content=content,
+                page_url=save_result.page_url,
+                page_count=extraction_result.page_count,
+                template_used=summarize_result.template_used,
+                output_format_used=summarize_result.output_format_used
+            )
+
+        except Exception as e:
+            logger.error(f"❌ [Telegram] Document error: {e}")
+            return f"❌ 處理文件時發生錯誤：{str(e)}"
 
     async def _handle_photo_message(self, photo: list, caption: str, chat_id: int) -> str:
         """
@@ -489,7 +601,7 @@ class TelegramHandler:
                     return "❌ 無法取得圖片"
 
                 file_id = largest_photo.get("file_id")
-                print(f"📸 [Telegram] Photo file_id: {file_id}")
+                logger.info(f"📸 [Telegram] Photo file_id: {file_id}")
 
                 # Get file path from Telegram
                 file_info = await self._get_file_info(file_id)
@@ -506,7 +618,7 @@ class TelegramHandler:
                 if not image_bytes:
                     return "❌ 無法下載圖片"
 
-                print(f"📸 [Telegram] Downloaded {len(image_bytes)} bytes")
+                logger.info(f"📸 [Telegram] Downloaded {len(image_bytes)} bytes")
 
                 # Determine MIME type from file extension
                 mime_type = "image/jpeg"
@@ -569,7 +681,7 @@ class TelegramHandler:
                 )
 
             except Exception as e:
-                print(f"❌ [Telegram] Photo error: {e}")
+                logger.error(f"❌ [Telegram] Photo error: {e}")
                 return f"❌ 處理圖片時發生錯誤：{str(e)}"
 
         # Fallback: Use ai_service directly (no Drive upload)
@@ -627,7 +739,7 @@ class TelegramHandler:
             return self._build_photo_success_response(content, caption, save_result.page_url)
 
         except Exception as e:
-            print(f"❌ [Telegram] Photo fallback error: {e}")
+            logger.error(f"❌ [Telegram] Photo fallback error: {e}")
             return f"❌ 處理圖片時發生錯誤：{str(e)}"
 
     def _build_photo_success_response(

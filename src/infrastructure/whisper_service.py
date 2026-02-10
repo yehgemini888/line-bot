@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from typing import Optional
 from openai import AsyncOpenAI
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class TranscriptionResult:
@@ -53,7 +56,7 @@ class WhisperService:
             TranscriptionResult with transcribed text
         """
         try:
-            print(f"🎙️ [Whisper] Transcribing {len(audio_bytes)} bytes...")
+            logger.info(f"🎙️ [Whisper] Transcribing {len(audio_bytes)} bytes...")
 
             # Create file-like object from bytes
             audio_file = io.BytesIO(audio_bytes)
@@ -71,8 +74,8 @@ class WhisperService:
             duration = getattr(response, 'duration', None)
             language = getattr(response, 'language', 'zh')
 
-            print(f"✅ [Whisper] Transcribed: {text[:50]}...")
-            print(f"   Duration: {duration}s, Language: {language}")
+            logger.info(f"✅ [Whisper] Transcribed: {text[:50]}...")
+            logger.info(f"   Duration: {duration}s, Language: {language}")
 
             return TranscriptionResult(
                 success=True,
@@ -82,7 +85,7 @@ class WhisperService:
             )
 
         except Exception as e:
-            print(f"❌ [Whisper] Transcription failed: {e}")
+            logger.error(f"❌ [Whisper] Transcription failed: {e}")
             return TranscriptionResult(
                 success=False,
                 error_message=str(e)
@@ -101,7 +104,7 @@ class WhisperService:
         import httpx
 
         try:
-            print(f"🎙️ [Whisper] Downloading audio from URL...")
+            logger.info(f"🎙️ [Whisper] Downloading audio from URL...")
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url)
@@ -119,7 +122,7 @@ class WhisperService:
             return await self.transcribe(audio_bytes, filename)
 
         except Exception as e:
-            print(f"❌ [Whisper] Failed to download audio: {e}")
+            logger.error(f"❌ [Whisper] Failed to download audio: {e}")
             return TranscriptionResult(
                 success=False,
                 error_message=f"Download failed: {str(e)}"

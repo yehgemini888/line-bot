@@ -5,8 +5,11 @@ AI-powered content classification with dynamic category support.
 Uses keyword matching and AI classification based on available templates.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Optional, List, TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.infrastructure.prompt_template_manager import PromptTemplateManager
@@ -62,7 +65,7 @@ class ContentClassifier:
         if url:
             url_category = self._classify_by_url_static(url)
             if url_category:
-                print(f"🏷️ [Classifier] URL match: {url_category}")
+                logger.info(f"🏷️ [Classifier] URL match: {url_category}")
                 return ClassificationResult(
                     category=url_category,
                     reason="URL pattern match"
@@ -155,7 +158,7 @@ class ContentClassifier:
             if category_str not in categories:
                 category_str = "lifestyle"  # Default fallback
             
-            print(f"🏷️ [Classifier] AI classified as: {category_str}")
+            logger.info(f"🏷️ [Classifier] AI classified as: {category_str}")
             
             return ClassificationResult(
                 category=category_str,
@@ -163,7 +166,7 @@ class ContentClassifier:
             )
 
         except Exception as e:
-            print(f"⚠️ [Classifier] AI classification failed: {e}, using lifestyle")
+            logger.warning(f"⚠️ [Classifier] AI classification failed: {e}, using lifestyle")
             return ClassificationResult(
                 category="lifestyle",
                 reason=f"Fallback due to error: {str(e)}"

@@ -24,6 +24,9 @@ from src.usecase.save_to_notion import SaveToNotionUseCase
 from src.infrastructure.social_detector import SocialDetector
 from src.infrastructure.image_detector import ImageDetector
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 class LineMessageHandler:
     """
@@ -50,7 +53,9 @@ class LineMessageHandler:
         process_image_usecase = None,
         youtube_service = None,
         ai_service = None,
-        whisper_service = None
+        whisper_service = None,
+        drive_service = None,
+        document_extractor = None
     ):
         """
         Initialize the handler.
@@ -65,6 +70,8 @@ class LineMessageHandler:
             youtube_service: Service for fetching YouTube video info and captions
             ai_service: AI service for summarization (Gemini/OpenAI)
             whisper_service: Service for speech-to-text transcription
+            drive_service: Google Drive service for file upload
+            document_extractor: Document text extraction service
         """
         configuration = Configuration(access_token=channel_access_token)
         self.api_client = AsyncApiClient(configuration)
@@ -78,6 +85,8 @@ class LineMessageHandler:
         self.youtube_service = youtube_service
         self.ai_service = ai_service
         self.whisper_service = whisper_service
+        self.drive_service = drive_service
+        self.document_extractor = document_extractor
 
     async def handle_message(self, event: MessageEvent) -> None:
         """
@@ -187,25 +196,25 @@ class LineMessageHandler:
             # Check if it's an image URL
             image_result = self.image_detector.detect(extracted_url)
             if image_result.is_image:
-                print(f"🖼️ [Debug] Detected IMAGE URL: {extracted_url}")
+                logger.debug(f"🖼️ Detected IMAGE URL: {extracted_url}")
                 return ContentType.IMAGE, None, extracted_url
 
             # Check if it's a YouTube URL (before social media)
             if self.social_detector.is_youtube_url(extracted_url):
-                print(f"🎬 [Debug] Detected YOUTUBE URL: {extracted_url}")
+                logger.debug(f"🎬 Detected YOUTUBE URL: {extracted_url}")
                 return ContentType.YOUTUBE, None, extracted_url
 
             # Check if it's a social media URL
             social_result = self.social_detector.detect(extracted_url)
             if social_result.is_social:
-                print(f"🕵️ [Debug] Detected SOCIAL: {social_result.platform} (URL: {extracted_url})")
+                logger.debug(f"🕵️ Detected SOCIAL: {social_result.platform} (URL: {extracted_url})")
                 return ContentType.SOCIAL, social_result.platform, extracted_url
 
             # It's a regular URL
-            print(f"🕵️ [Debug] Detected URL: {extracted_url}")
+            logger.debug(f"🕵️ Detected URL: {extracted_url}")
             return ContentType.URL, None, extracted_url
 
-        print(f"🕵️ [Debug] Detected TEXT: {text[:50]}...")
+        logger.debug(f"🕵️ Detected TEXT: {text[:50]}...")
         return ContentType.TEXT, None, None
 
     async def _process_content(
@@ -215,7 +224,7 @@ class LineMessageHandler:
         platform: Optional[SocialPlatform] = None
     ) -> str:
         """Process content through summarization and save."""
-        print(f"⚙️ [Debug] Processing content: type={content_type}, platform={platform}")
+        logger.debug(f"⚙️ Processing content: type={content_type}, platform={platform}")
         # Step 1: Summarize
         summarize_result = await self.summarize_usecase.execute(
             raw_input=text,
@@ -292,7 +301,7 @@ class LineMessageHandler:
                 )
             )
         except Exception as e:
-            print(f"Failed to push message: {e}")
+            logger.error(f"❌ [Line] Failed to push message: {e}")
 
     async def download_line_image(self, message_id: str) -> Optional[bytes]:
         """
@@ -312,14 +321,14 @@ class LineMessageHandler:
                 response = await client.get(url, headers=headers, timeout=30.0)
 
                 if response.status_code == 200:
-                    print(f"📥 [Line] Downloaded image: {len(response.content)} bytes")
+                    logger.info(f"📥 [Line] Downloaded image: {len(response.content)} bytes")
                     return response.content
                 else:
-                    print(f"❌ [Line] Failed to download image: {response.status_code}")
+                    logger.error(f"❌ [Line] Failed to download image: {response.status_code}")
                     return None
 
         except Exception as e:
-            print(f"❌ [Line] Error downloading image: {e}")
+            logger.error(f"❌ [Line] Error downloading image: {e}")
             return None
 
     async def download_image_from_url(self, url: str) -> Optional[bytes]:
@@ -339,17 +348,17 @@ class LineMessageHandler:
                 if response.status_code == 200:
                     content_type = response.headers.get("content-type", "")
                     if "image" in content_type or self._is_image_response(response.content):
-                        print(f"📥 [HTTP] Downloaded image from URL: {len(response.content)} bytes")
+                        logger.info(f"📥 [HTTP] Downloaded image from URL: {len(response.content)} bytes")
                         return response.content
                     else:
-                        print(f"⚠️ [HTTP] URL did not return image content: {content_type}")
+                        logger.warning(f"⚠️ [HTTP] URL did not return image content: {content_type}")
                         return None
                 else:
-                    print(f"❌ [HTTP] Failed to download image: {response.status_code}")
+                    logger.error(f"❌ [HTTP] Failed to download image: {response.status_code}")
                     return None
 
         except Exception as e:
-            print(f"❌ [HTTP] Error downloading image: {e}")
+            logger.error(f"❌ [HTTP] Error downloading image: {e}")
             return None
 
     def _is_image_response(self, content: bytes) -> bool:
@@ -547,7 +556,7 @@ class LineMessageHandler:
         if not self.youtube_service:
             return "❌ YouTube 功能未啟用"
 
-        print(f"🎬 [YouTube] Processing: {youtube_url}")
+        logger.info(f"🎬 [YouTube] Processing: {youtube_url}")
 
         # Step 1: Get video info and captions
         video_info = await self.youtube_service.get_video_info(youtube_url)
@@ -623,7 +632,7 @@ class LineMessageHandler:
         if not self.whisper_service:
             return "❌ 語音功能未啟用"
 
-        print(f"🎙️ [Audio] Processing audio message: {message_id}")
+        logger.info(f"🎙️ [Audio] Processing audio message: {message_id}")
 
         try:
             # Download audio from Line
@@ -631,7 +640,7 @@ class LineMessageHandler:
             if not audio_bytes:
                 return "❌ 無法下載音檔"
 
-            print(f"🎙️ [Audio] Downloaded {len(audio_bytes)} bytes")
+            logger.info(f"🎙️ [Audio] Downloaded {len(audio_bytes)} bytes")
 
             # Transcribe with Whisper
             transcription_result = await self.whisper_service.transcribe(
@@ -645,7 +654,7 @@ class LineMessageHandler:
             transcribed_text = transcription_result.text
             duration = transcription_result.duration_seconds
 
-            print(f"🎙️ [Audio] Transcribed: {transcribed_text[:50]}...")
+            logger.info(f"🎙️ [Audio] Transcribed: {transcribed_text[:50]}...")
 
             # Step 3: Summarize via SummarizeUseCase (NEW - uses template system)
             summarize_result = await self.summarize_usecase.execute(
@@ -678,7 +687,7 @@ class LineMessageHandler:
             )
 
         except Exception as e:
-            print(f"❌ [Audio] Error: {e}")
+            logger.error(f"❌ [Audio] Error: {e}")
             return f"❌ 處理語音訊息時發生錯誤：{str(e)}"
 
     def _build_audio_success_response(
@@ -699,3 +708,98 @@ class LineMessageHandler:
             template_used=template_used,
             output_format_used=output_format_used
         )
+
+    async def _get_message_content(self, message_id: str) -> Optional[bytes]:
+        """Download any message content (image, audio, file) from Line servers."""
+        return await self.download_line_image(message_id)
+
+    async def handle_file_message_with_push(
+        self,
+        user_id: str,
+        message_id: str,
+        file_name: str,
+        file_size: int
+    ) -> str:
+        """
+        Handle Line file message and return result.
+
+        Args:
+            user_id: Line user ID for push message
+            message_id: Line message ID containing the file
+            file_name: Original file name
+            file_size: File size in bytes
+
+        Returns:
+            Result message to send back to user
+        """
+        if not self.document_extractor:
+            return "❌ 文件處理功能未啟用"
+
+        # Check if file type is supported
+        mime_type = self.document_extractor.detect_mime_type(file_name)
+        if not mime_type or not self.document_extractor.is_supported(mime_type=mime_type):
+            supported = "PDF, DOCX, XLSX, PPTX, CSV, TXT"
+            return f"❌ 不支援的檔案格式。\n目前支援：{supported}"
+
+        try:
+            # Step 1: Download file from Line
+            file_data = await self._get_message_content(message_id)
+            if not file_data:
+                return "❌ 無法下載檔案"
+
+            logger.info(f"📄 [File] Downloaded: {file_name} ({len(file_data)} bytes)")
+
+            # Step 2: Upload to Google Drive (if available)
+            file_url = None
+            if self.drive_service:
+                upload_result = await self.drive_service.upload_image(
+                    image_data=file_data,
+                    filename=file_name,
+                    mime_type=mime_type
+                )
+                if upload_result.success:
+                    file_url = upload_result.file_url
+                    logger.info(f"📁 [File] Uploaded to Drive: {file_url}")
+                else:
+                    logger.warning(f"⚠️ [File] Drive upload failed: {upload_result.error_message}")
+
+            # Step 3: Extract text from document
+            extraction_result = await self.document_extractor.extract(file_data, mime_type, ai_service=self.ai_service)
+            if not extraction_result.success:
+                return f"❌ 文字萃取失敗：{extraction_result.error_message}"
+
+            page_info = f"（共 {extraction_result.page_count} 頁）" if extraction_result.page_count else ""
+            logger.info(f"📄 [File] Extracted {len(extraction_result.text)} chars {page_info}")
+
+            # Step 4: Summarize via SummarizeUseCase
+            summarize_result = await self.summarize_usecase.execute(
+                raw_input=extraction_result.text,
+                input_type=ContentType.FILE,
+                file_name=file_name,
+                file_url=file_url,
+                extracted_text=extraction_result.text
+            )
+
+            if not summarize_result.success:
+                return f"❌ 處理失敗：{summarize_result.error_message}"
+
+            content = summarize_result.content
+
+            # Step 5: Save to Notion
+            save_result = await self.save_usecase.execute(content)
+
+            if not save_result.success:
+                return f"❌ 儲存失敗：{save_result.error_message}"
+
+            # Build response
+            return ResponseBuilder.build_file_response(
+                content=content,
+                page_url=save_result.page_url,
+                page_count=extraction_result.page_count,
+                template_used=summarize_result.template_used,
+                output_format_used=summarize_result.output_format_used
+            )
+
+        except Exception as e:
+            logger.error(f"❌ [File] Error: {e}")
+            return f"❌ 處理文件時發生錯誤：{str(e)}"

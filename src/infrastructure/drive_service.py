@@ -17,6 +17,9 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class UploadResult:
@@ -75,7 +78,7 @@ class GoogleDriveService:
             self.credentials_file, scopes=self.SCOPES
         )
         self.service = build('drive', 'v3', credentials=creds)
-        print("✅ [Drive] Service initialized with Service Account")
+        logger.info("✅ [Drive] Service initialized with Service Account")
 
     def _init_with_oauth(self):
         """Initialize using OAuth 2.0 credentials (for local development)."""
@@ -99,15 +102,15 @@ class GoogleDriveService:
                 flow.redirect_uri = 'http://localhost:8080/'
                 auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
 
-                print("=" * 60)
-                print("🔐 需要授權 Google Drive 存取權限")
-                print("=" * 60)
-                print(f"\n1. 請在瀏覽器開啟此網址：\n\n{auth_url}\n")
-                print("2. 授權後，瀏覽器會顯示「無法連線」錯誤")
-                print("3. 從網址列複製 code= 後面的內容（到 & 之前）")
-                print("   例如: http://localhost:8080/?code=4/0XXXXX&scope=...")
-                print("   只需要複製 4/0XXXXX 這部分")
-                print("=" * 60)
+                logger.info("=" * 60)
+                logger.info("🔐 需要授權 Google Drive 存取權限")
+                logger.info("=" * 60)
+                logger.info(f"\n1. 請在瀏覽器開啟此網址：\n\n{auth_url}\n")
+                logger.info("2. 授權後，瀏覽器會顯示「無法連線」錯誤")
+                logger.info("3. 從網址列複製 code= 後面的內容（到 & 之前）")
+                logger.info("   例如: http://localhost:8080/?code=4/0XXXXX&scope=...")
+                logger.info("   只需要複製 4/0XXXXX 這部分")
+                logger.info("=" * 60)
                 code = input("\n請貼上授權碼: ").strip()
                 flow.fetch_token(code=code)
                 creds = flow.credentials
@@ -115,10 +118,10 @@ class GoogleDriveService:
             # Save token for future use
             with open(self.token_file, 'w') as token:
                 token.write(creds.to_json())
-            print(f"✅ [Drive] Token saved to {self.token_file}")
+            logger.info(f"✅ [Drive] Token saved to {self.token_file}")
 
         self.service = build('drive', 'v3', credentials=creds)
-        print("✅ [Drive] Service initialized with OAuth")
+        logger.info("✅ [Drive] Service initialized with OAuth")
 
     def upload_image(
         self,
@@ -169,7 +172,7 @@ class GoogleDriveService:
             # Get the public view link
             file_url = f"https://drive.google.com/file/d/{file_id}/view"
 
-            print(f"📤 [Drive] Uploaded: {filename} -> {file_url}")
+            logger.info(f"📤 [Drive] Uploaded: {filename} -> {file_url}")
 
             return UploadResult(
                 success=True,
@@ -178,7 +181,7 @@ class GoogleDriveService:
             )
 
         except Exception as e:
-            print(f"❌ [Drive] Upload failed: {e}")
+            logger.error(f"❌ [Drive] Upload failed: {e}")
             return UploadResult(
                 success=False,
                 error_message=str(e)

@@ -6,8 +6,11 @@ Infrastructure Layer: Schema Cache
 """
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -61,12 +64,12 @@ class SchemaCache:
         
         # 驗證 Prompt 是否有變更
         if cached.prompt_hash != current_hash:
-            print(f"⚠️ [SchemaCache] Prompt 已變更，需重新生成 Schema: {category}")
+            logger.warning(f"⚠️ [SchemaCache] Prompt 已變更，需重新生成 Schema: {category}")
             # 移除過期的快取
             del self._cache[category]
             return None
         
-        print(f"✅ [SchemaCache] 命中快取: {category}")
+        logger.info(f"✅ [SchemaCache] 命中快取: {category}")
         return cached.schema
     
     def set(self, category: str, schema: dict, prompt: str) -> None:
@@ -83,7 +86,7 @@ class SchemaCache:
             schema=schema,
             prompt_hash=prompt_hash
         )
-        print(f"📦 [SchemaCache] 已快取 Schema: {category}")
+        logger.info(f"📦 [SchemaCache] 已快取 Schema: {category}")
     
     def invalidate(self, category: str) -> None:
         """
@@ -94,12 +97,12 @@ class SchemaCache:
         """
         if category in self._cache:
             del self._cache[category]
-            print(f"🗑️ [SchemaCache] 已清除快取: {category}")
+            logger.info(f"🗑️ [SchemaCache] 已清除快取: {category}")
     
     def clear(self) -> None:
         """清除所有快取"""
         self._cache.clear()
-        print("🗑️ [SchemaCache] 已清除所有快取")
+        logger.info("🗑️ [SchemaCache] 已清除所有快取")
     
     def get_cached_categories(self) -> list:
         """

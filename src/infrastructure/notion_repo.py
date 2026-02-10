@@ -64,7 +64,9 @@ class NotionRepository:
         image_url: Optional[str] = None,
         image_description: Optional[str] = None,
         video_duration: Optional[str] = None,
-        channel_name: Optional[str] = None
+        channel_name: Optional[str] = None,
+        file_url: Optional[str] = None,
+        file_name: Optional[str] = None
     ) -> SaveResult:
         """
         Save content to Notion database.
@@ -148,6 +150,16 @@ class NotionRepository:
             if channel_name:
                 properties["Channel"] = {
                     "rich_text": self._split_text(channel_name)
+                }
+
+            # Add file properties if provided
+            if file_url:
+                properties["File URL"] = {
+                    "url": file_url
+                }
+            if file_name:
+                properties["File Name"] = {
+                    "rich_text": self._split_text(file_name)
                 }
 
             # Create page in database

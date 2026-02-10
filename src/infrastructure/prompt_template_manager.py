@@ -23,6 +23,9 @@ from src.infrastructure.output_schemas import (
 from src.infrastructure.schema_cache import SchemaCache
 from src.infrastructure.schema_generator import SchemaGenerator
 
+import logging
+logger = logging.getLogger(__name__)
+
 # TTL for Notion template cache (seconds)
 TEMPLATE_TTL = 300  # 5 minutes
 
@@ -170,7 +173,7 @@ class PromptTemplateManager:
         template = self.get_template(category)
 
         if not template:
-            print(f"⚠️ [Templates] 找不到分類 '{category}'，使用預設")
+            logger.warning(f"⚠️ [Templates] 找不到分類 '{category}'，使用預設")
             template = self._templates.get("lifestyle")
             return template, DEFAULT_SCHEMA
 
@@ -179,11 +182,11 @@ class PromptTemplateManager:
         # 情況 1：使用預設格式
         if is_preset_format(output_format):
             schema = get_preset_schema(output_format)
-            print(f"📋 [Templates] 使用預設格式: {output_format}")
+            logger.info(f"📋 [Templates] 使用預設格式: {output_format}")
             return template, schema
 
         # 情況 2：自動推斷 - 根據內容動態生成
-        print(f"🔄 [Templates] 自動推斷 Schema: {category}")
+        logger.info(f"🔄 [Templates] 自動推斷 Schema: {category}")
         schema = await self._schema_generator.generate_schema(
             role_prompt=template.prompt,
             content=content,
@@ -219,7 +222,7 @@ class PromptTemplateManager:
         if url:
             category = ContentClassifier._classify_by_url_static(url)
             if category:
-                print(f"🏷️ [SmartMatch] URL 快速匹配: {category}")
+                logger.info(f"🏷️ [SmartMatch] URL 快速匹配: {category}")
                 template, schema = await self.get_template_with_schema(
                     category, content, ai_service
                 )
@@ -228,14 +231,14 @@ class PromptTemplateManager:
         # Step 2: Keyword match (fast, no AI)
         keyword_match = self.match_by_keywords(content)
         if keyword_match:
-            print(f"🏷️ [SmartMatch] 關鍵字匹配: {keyword_match}")
+            logger.info(f"🏷️ [SmartMatch] 關鍵字匹配: {keyword_match}")
             template, schema = await self.get_template_with_schema(
                 keyword_match, content, ai_service
             )
             return template, schema, keyword_match
 
         # Step 3: 合併 AI 呼叫 (classify + schema in 1 call)
-        print(f"🤖 [SmartMatch] 無快速匹配，使用合併 AI 分類+Schema 生成")
+        logger.info(f"🤖 [SmartMatch] 無快速匹配，使用合併 AI 分類+Schema 生成")
         category, schema = await self._schema_generator.classify_and_generate_schema(
             content=content,
             templates=self._templates,
@@ -247,7 +250,7 @@ class PromptTemplateManager:
         # 如果分類到的模板是預設格式，覆蓋 AI 生成的 schema
         if template and is_preset_format(template.output_format):
             schema = get_preset_schema(template.output_format)
-            print(f"📋 [SmartMatch] 分類={category}，使用預設格式: {template.output_format}")
+            logger.info(f"📋 [SmartMatch] 分類={category}，使用預設格式: {template.output_format}")
 
         return template, schema, category
 
@@ -267,28 +270,76 @@ class PromptTemplateManager:
             if template.keywords
         }
 
-    def match_by_keywords(self, content: str) -> Optional[str]:
-        """Match content to a category based on keywords."""
-        content_lower = content.lower()
+    def _build_keyword_specificity(self) -> Dict[str, int]:
+        """Build reverse index: keyword → number of templates using it.
 
-        best_match = None
-        best_score = 0
+        Used to weight keywords by specificity:
+        - Unique keywords (only in 1 template) are more reliable signals.
+        - Shared keywords (in 2+ templates) are weaker signals.
+        """
+        keyword_count: Dict[str, int] = {}
+        for template in self._templates.values():
+            for kw in template.keywords:
+                kw_lower = kw.lower()
+                keyword_count[kw_lower] = keyword_count.get(kw_lower, 0) + 1
+        return keyword_count
+
+    def match_by_keywords(self, content: str) -> Optional[str]:
+        """Match content to a category based on weighted keywords.
+
+        Scoring:
+        - Unique keyword (only in this template): weight 2
+        - Shared keyword (in 2+ templates): weight 1
+
+        Ambiguity check:
+        - If the gap between #1 and #2 score is < 2, consider it ambiguous
+          and fall through to AI classification for a more reliable result.
+        """
+        content_lower = content.lower()
+        keyword_specificity = self._build_keyword_specificity()
+
+        scores: Dict[str, float] = {}
 
         for category, template in self._templates.items():
             if not template.keywords:
                 continue
 
-            score = sum(1 for kw in template.keywords if kw.lower() in content_lower)
+            score = 0.0
+            matched_kws = []
+            for kw in template.keywords:
+                kw_lower = kw.lower()
+                if kw_lower in content_lower:
+                    # Unique keyword = weight 2, shared = weight 1
+                    weight = 2 if keyword_specificity.get(kw_lower, 1) == 1 else 1
+                    score += weight
+                    matched_kws.append(f"{kw}(w{weight})")
 
-            if score > best_score:
-                best_score = score
-                best_match = category
+            if score > 0:
+                scores[category] = score
+                if matched_kws:
+                    logger.debug(f"🔑 [Keywords] {category}: {', '.join(matched_kws)} → score={score}")
 
-        if best_score >= 2:
-            print(f"🏷️ [Templates] Keyword match: {best_match} (score: {best_score})")
-            return best_match
+        if not scores:
+            return None
 
-        return None
+        # Sort by score descending
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        best_category, best_score = ranked[0]
+        second_score = ranked[1][1] if len(ranked) > 1 else 0
+
+        # Minimum threshold: weighted score must be >= 2
+        if best_score < 2:
+            return None
+
+        # Ambiguity check: if gap between #1 and #2 is too small, let AI decide
+        margin = best_score - second_score
+        if second_score > 0 and margin < 2:
+            second_category = ranked[1][0]
+            logger.warning(f"⚠️ [Keywords] 模糊匹配: {best_category}({best_score}) vs {second_category}({second_score})，交由 AI 判斷")
+            return None
+
+        logger.info(f"🏷️ [Keywords] 確定匹配: {best_category} (score={best_score}, margin={margin})")
+        return best_category
 
     async def load_from_notion(self) -> None:
         """
@@ -296,16 +347,16 @@ class PromptTemplateManager:
         Respects TTL cache - skips reload if loaded recently.
         """
         if not self.notion_client or not self.template_database_id:
-            print("⚠️ [Templates] Notion not configured, using defaults only")
+            logger.warning("⚠️ [Templates] Notion not configured, using defaults only")
             return
 
         # TTL check
         if not self._should_reload():
-            print(f"✅ [Templates] 使用快取模板 (TTL 剩餘 {int(TEMPLATE_TTL - (time.time() - self._last_loaded_at))} 秒)")
+            logger.info(f"✅ [Templates] 使用快取模板 (TTL 剩餘 {int(TEMPLATE_TTL - (time.time() - self._last_loaded_at))} 秒)")
             return
 
         try:
-            print(f"📋 [Templates] Loading from Notion: {self.template_database_id[:8]}...")
+            logger.info(f"📋 [Templates] Loading from Notion: {self.template_database_id[:8]}...")
 
             # Use raw request API (notion-client v2.7.0 doesn't have databases.query)
             response = await self.notion_client.request(
@@ -340,7 +391,7 @@ class PromptTemplateManager:
                     prompt = prompt_texts[0]["text"]["content"] if prompt_texts else ""
 
                     if not prompt:
-                        print(f"⚠️ [Templates] Skipping '{name}': empty prompt")
+                        logger.warning(f"⚠️ [Templates] Skipping '{name}': empty prompt")
                         continue
 
                     # Extract keywords
@@ -366,21 +417,38 @@ class PromptTemplateManager:
 
                     self._templates[category] = template
                     loaded_count += 1
-                    print(f"✅ [Templates] Loaded: {name} → {category} (format: {output_format})")
+                    logger.info(f"✅ [Templates] Loaded: {name} → {category} (format: {output_format})")
 
                 except Exception as e:
-                    print(f"⚠️ [Templates] Error parsing template: {e}")
+                    logger.warning(f"⚠️ [Templates] Error parsing template: {e}")
                     continue
 
             self._loaded_from_notion = True
             self._last_loaded_at = time.time()
-            print(f"📋 [Templates] Loaded {loaded_count} templates from Notion")
-            print(f"📋 [Templates] Total categories: {list(self._templates.keys())}")
+            logger.info(f"📋 [Templates] Loaded {loaded_count} templates from Notion")
+            logger.info(f"📋 [Templates] Total categories: {list(self._templates.keys())}")
+
+            # Detect keyword overlaps and warn
+            self._warn_keyword_overlaps()
 
         except Exception as e:
-            print(f"❌ [Templates] Failed to load from Notion: {e}")
+            logger.error(f"❌ [Templates] Failed to load from Notion: {e}")
             # Still update timestamp to avoid hammering Notion on repeated failures
             self._last_loaded_at = time.time()
+
+    def _warn_keyword_overlaps(self) -> None:
+        """Detect and log keywords shared between multiple templates."""
+        keyword_to_categories: Dict[str, List[str]] = {}
+        for category, template in self._templates.items():
+            for kw in template.keywords:
+                kw_lower = kw.lower()
+                keyword_to_categories.setdefault(kw_lower, []).append(category)
+
+        overlaps = {kw: cats for kw, cats in keyword_to_categories.items() if len(cats) > 1}
+        if overlaps:
+            logger.warning(f"⚠️ [Keywords] 偵測到 {len(overlaps)} 個重疊關鍵字（權重將降低）:")
+            for kw, cats in overlaps.items():
+                logger.warning(f"   '{kw}' → {', '.join(cats)}")
 
     def clear_schema_cache(self) -> None:
         """清除所有 Schema 快取"""

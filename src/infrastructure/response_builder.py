@@ -187,3 +187,53 @@ class ResponseBuilder:
             response += f"\n\n📄 Notion 連結：{page_url}"
 
         return response
+
+    @staticmethod
+    def build_file_response(
+        content,
+        page_url: Optional[str] = None,
+        page_count: Optional[int] = None,
+        template_used: Optional[str] = None,
+        output_format_used: Optional[str] = None
+    ) -> str:
+        """
+        建構文件處理成功的回應訊息。
+
+        Args:
+            content: 內容實體（包含 title, summary, tags, file_name, file_url）
+            page_url: Notion 頁面連結
+            page_count: 文件頁數（PDF/PPTX）
+            template_used: 使用的模板名稱
+            output_format_used: 使用的輸出格式
+
+        Returns:
+            格式化的回應訊息
+        """
+        tags_str = ", ".join(content.tags) if content.tags else "無"
+        file_name = getattr(content, 'file_name', None) or "文件"
+        file_url = getattr(content, 'file_url', None)
+        page_info = f"（共 {page_count} 頁）" if page_count else ""
+
+        response = f"""✅ 文件已儲存至 Notion！
+
+📄 檔案：{file_name} {page_info}
+
+📌 標題：{content.title}
+
+📝 摘要：
+{content.summary}
+
+🏷️ 標籤：{tags_str}"""
+
+        if file_url:
+            response += f"\n\n📁 Drive 連結：{file_url}"
+
+        if template_used:
+            response += f"\n\n🎯 使用模板：{template_used}"
+        if output_format_used:
+            response += f"\n📋 輸出格式：{output_format_used}"
+
+        if page_url:
+            response += f"\n\n📄 Notion 連結：{page_url}"
+
+        return response

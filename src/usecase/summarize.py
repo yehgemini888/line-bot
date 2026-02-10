@@ -5,6 +5,7 @@ Orchestrates web scraping, social media scraping, and AI summarization.
 Includes smart prompt selection based on content category.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol, Optional, List
 
@@ -14,6 +15,8 @@ from src.domain.content import (
 )
 from src.infrastructure.content_classifier import ContentClassifier
 from src.infrastructure.prompt_template_manager import PromptTemplateManager
+
+logger = logging.getLogger(__name__)
 
 
 # Define interfaces (ports) for dependency injection
@@ -145,9 +148,9 @@ class SummarizeUseCase:
         if self.template_manager:
             try:
                 await self.template_manager.load_from_notion()
-                print(f"📋 [Summarize] Available categories: {self.template_manager.get_all_categories()}")
+                logger.info(f"📋 [Summarize] Available categories: {self.template_manager.get_all_categories()}")
             except Exception as e:
-                print(f"❌ [Summarize] Template loading failed: {e}")
+                logger.error(f"❌ [Summarize] Template loading failed: {e}")
 
     async def execute(
         self,
@@ -162,14 +165,18 @@ class SummarizeUseCase:
         youtube_info: Optional[dict] = None,
         # Audio-specific parameters
         audio_transcription: Optional[str] = None,
-        audio_duration: Optional[float] = None
+        audio_duration: Optional[float] = None,
+        # File/document-specific parameters
+        file_name: Optional[str] = None,
+        file_url: Optional[str] = None,
+        extracted_text: Optional[str] = None
     ) -> SummarizeResult:
         """
         Execute the summarize use case.
 
         Args:
             raw_input: The raw text or URL from user
-            input_type: ContentType (TEXT, URL, SOCIAL, IMAGE, YOUTUBE, AUDIO)
+            input_type: ContentType (TEXT, URL, SOCIAL, IMAGE, YOUTUBE, AUDIO, FILE)
             social_platform: Platform if SOCIAL type
             image_data: Image binary data if IMAGE type
             image_mime_type: Image MIME type if IMAGE type
@@ -177,6 +184,9 @@ class SummarizeUseCase:
             youtube_info: Dict with title, captions, description, channel, duration
             audio_transcription: Transcribed text if AUDIO type
             audio_duration: Audio duration in seconds if AUDIO type
+            file_name: Original file name if FILE type
+            file_url: Google Drive URL if FILE type
+            extracted_text: Text extracted from document if FILE type
 
         Returns:
             SummarizeResult containing the processed Content entity
@@ -228,12 +238,12 @@ class SummarizeUseCase:
             content.raw_content = scrape_result.text_content
 
             # Store social media metadata in content entity
-            print(f"🐛 [Summarize] Scrape result - Likes: {scrape_result.likes}, Comments: {scrape_result.comments}, Shares: {scrape_result.shares}")
+            logger.debug(f"🐛 [Summarize] Scrape result - Likes: {scrape_result.likes}, Comments: {scrape_result.comments}, Shares: {scrape_result.shares}")
             content.author = scrape_result.author
             content.likes = scrape_result.likes
             content.comments = scrape_result.comments
             content.shares = scrape_result.shares
-            print(f"🐛 [Summarize] Content entity - Likes: {content.likes}, Comments: {content.comments}, Shares: {content.shares}")
+            logger.debug(f"🐛 [Summarize] Content entity - Likes: {content.likes}, Comments: {content.comments}, Shares: {content.shares}")
 
             # Add metadata to summary context for AI
             meta_info = []
@@ -268,7 +278,7 @@ class SummarizeUseCase:
             # For AI analysis, we'll use image_data
             # The actual analysis will happen in Step 4
             text_to_summarize = "[Image Analysis]"
-            print(f"🖼️ [Summarize] Processing image (has_data={image_data is not None}, has_url={image_url is not None})")
+            logger.info(f"🖼️ [Summarize] Processing image (has_data={image_data is not None}, has_url={image_url is not None})")
 
         elif input_type == ContentType.YOUTUBE:
             # YouTube processing
@@ -307,7 +317,7 @@ class SummarizeUseCase:
 影片描述：
 {youtube_info.get('description', '(無描述)')[:3000]}"""
             
-            print(f"🎬 [Summarize] Processing YouTube (has_captions={has_captions})")
+            logger.info(f"🎬 [Summarize] Processing YouTube (has_captions={has_captions})")
 
         elif input_type == ContentType.AUDIO:
             # Audio processing
@@ -328,7 +338,27 @@ class SummarizeUseCase:
             
             # Use transcription for summarization
             text_to_summarize = audio_transcription
-            print(f"🎙️ [Summarize] Processing audio ({len(audio_transcription)} chars)")
+            logger.info(f"🎙️ [Summarize] Processing audio ({len(audio_transcription)} chars)")
+
+        elif input_type == ContentType.FILE:
+            # Document/file processing
+            from src.domain.content import create_file_content
+
+            if not extracted_text:
+                return SummarizeResult(
+                    content=create_file_content(file_name=file_name or "unknown"),
+                    success=False,
+                    error_message="缺少文件萃取文字"
+                )
+
+            content = create_file_content(
+                file_name=file_name or "unknown",
+                extracted_text=extracted_text,
+                file_url=file_url
+            )
+
+            text_to_summarize = f"檔案名稱：{file_name}\n\n{extracted_text}"
+            logger.info(f"📄 [Summarize] Processing file: {file_name} ({len(extracted_text)} chars)")
 
         else:
             content = create_text_content(raw_input)
@@ -358,11 +388,11 @@ class SummarizeUseCase:
                     url=url_for_classify
                 )
                 template_used = template.name if template else category
-                print(f"🏷️ [Summarize] 使用模板: {category}")
-                print(f"📋 [Summarize] 輸出格式: {template.output_format if template else 'default'}")
+                logger.info(f"🏷️ [Summarize] 使用模板: {category}")
+                logger.info(f"📋 [Summarize] 輸出格式: {template.output_format if template else 'default'}")
 
             except Exception as e:
-                print(f"⚠️ [Summarize] Smart prompt 失敗，使用預設: {e}")
+                logger.warning(f"⚠️ [Summarize] Smart prompt 失敗，使用預設: {e}")
                 template = None
                 schema = None
 
@@ -370,7 +400,7 @@ class SummarizeUseCase:
         try:
             # Special handling for IMAGE type (uses vision API)
             if input_type == ContentType.IMAGE and image_data:
-                print(f"🖼️ [Summarize] Using Vision API for image analysis")
+                logger.info(f"🖼️ [Summarize] Using Vision API for image analysis")
                 
                 # Use vision API to analyze image
                 vision_result = await self.ai_service.analyze_image(
@@ -402,7 +432,7 @@ class SummarizeUseCase:
             
             if template and schema:
                 # 使用新的 Structured Output API
-                print(f"🎯 [Summarize] 使用 Structured Output API")
+                logger.info(f"🎯 [Summarize] 使用 Structured Output API")
                 result_dict = await self.ai_service.summarize_with_schema(
                     content=text_to_summarize,
                     prompt=template.prompt,
@@ -436,7 +466,7 @@ class SummarizeUseCase:
                 
             else:
                 # 回退到舊的 summarize 方法
-                print(f"⚠️ [Summarize] 回退到傳統摘要方法")
+                logger.warning(f"⚠️ [Summarize] 回退到傳統摘要方法")
                 summary_result = await self.ai_service.summarize(
                     content=text_to_summarize,
                     content_type=input_type.value,
@@ -455,7 +485,7 @@ class SummarizeUseCase:
                 result_tags = summary_result.tags
                 
         except Exception as e:
-            print(f"❌ [Summarize] AI 摘要失敗: {e}")
+            logger.error(f"❌ [Summarize] AI 摘要失敗: {e}")
             return SummarizeResult(
                 content=content,
                 success=False,
